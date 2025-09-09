@@ -95,7 +95,7 @@ export async function createSubscription(
 
           if (
             discount.coupon.duration === "repeating" &&
-            new Date(discount.end!) < new Date()
+            new Date(discount.end! * 1000) < new Date()
           ) {
             return null;
           }
@@ -104,8 +104,8 @@ export async function createSubscription(
             const duration_in_months =
               discount.coupon.duration === "repeating"
                 ? Math.round(
-                    (new Date(discount.end!).valueOf() -
-                      new Date(discount.start!).valueOf()) /
+                    (new Date(discount.end! * 1000).valueOf() -
+                      new Date(discount.start! * 1000).valueOf()) /
                       (1000 * 60 * 60 * 24 * 30),
                   )
                 : 0;
