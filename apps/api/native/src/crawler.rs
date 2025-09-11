@@ -32,6 +32,8 @@ pub struct FilterLinksCall {
   pub allow_backward_crawling: bool,
   pub ignore_robots_txt: bool,
   pub robots_txt: String,
+  pub allow_external_content_links: bool,
+  pub allow_subdomains: bool,
 }
 
 #[derive(Serialize)]
@@ -39,6 +41,27 @@ pub struct FilterLinksCall {
 pub struct FilterLinksResult {
   pub links: Vec<String>,
   pub denial_reasons: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[napi(object)]
+pub struct FilterUrlCall {
+  pub href: String,
+  pub url: String,
+  pub base_url: String,
+  pub excludes: Vec<String>,
+  pub ignore_robots_txt: bool,
+  pub robots_txt: String,
+  pub allow_external_content_links: bool,
+  pub allow_subdomains: bool,
+}
+
+#[derive(Serialize)]
+#[napi(object)]
+pub struct FilterUrlResult {
+  pub allowed: bool,
+  pub url: Option<String>,
+  pub denial_reason: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -94,6 +117,9 @@ const INCLUDE_PATTERN: &str = "INCLUDE_PATTERN";
 const BACKWARD_CRAWLING: &str = "BACKWARD_CRAWLING";
 const ROBOTS_TXT: &str = "ROBOTS_TXT";
 const FILE_TYPE: &str = "FILE_TYPE";
+const SOCIAL_MEDIA: &str = "SOCIAL_MEDIA";
+const EXTERNAL_LINK: &str = "EXTERNAL_LINK";
+const SECTION_LINK: &str = "SECTION_LINK";
 
 #[inline]
 fn is_file(path: &str) -> bool {
@@ -111,6 +137,68 @@ fn get_url_depth(path: &str) -> u32 {
     .split('/')
     .filter(|segment| !segment.is_empty() && *segment != "index.php" && *segment != "index.html")
     .count() as u32
+}
+
+#[inline]
+fn is_internal_link(url: &Url, base_url: &Url) -> bool {
+  let base_domain = base_url.host_str()
+    .unwrap_or("")
+    .trim_start_matches("www.")
+    .trim();
+  let link_domain = url.host_str()
+    .unwrap_or("")
+    .trim_start_matches("www.")
+    .trim();
+  
+  link_domain == base_domain
+}
+
+#[inline]
+fn no_sections(url_str: &str) -> bool {
+  if !url_str.contains('#') {
+    return true;
+  }
+  
+  // Check if the hash fragment looks like a route (contains forward slashes and has substantial content)
+  if let Some(hash_part) = url_str.split('#').nth(1) {
+    hash_part.len() > 1 && hash_part.contains('/')
+  } else {
+    false
+  }
+}
+
+#[inline]
+fn is_social_media_or_email(url_str: &str) -> bool {
+  const SOCIAL_MEDIA_OR_EMAIL: &[&str] = &[
+    "facebook.com", "twitter.com", "linkedin.com", "instagram.com", 
+    "pinterest.com", "mailto:", "github.com", "calendly.com", 
+    "discord.gg", "discord.com"
+  ];
+  
+  SOCIAL_MEDIA_OR_EMAIL.iter().any(|domain| url_str.contains(domain))
+}
+
+#[inline]
+fn is_subdomain(url: &Url, base_url: &Url) -> bool {
+  match (url.host_str(), base_url.host_str()) {
+    (Some(link_host), Some(base_host)) => {
+      // Simple subdomain check - if the link host ends with the base host but is not equal
+      link_host != base_host && link_host.ends_with(&format!(".{}", base_host))
+    },
+    _ => false,
+  }
+}
+
+#[inline]
+fn is_external_main_page(url_str: &str) -> bool {
+  if let Ok(url) = Url::parse(url_str) {
+    let path_segments: Vec<&str> = url.path_segments()
+      .map(|segments| segments.filter(|s| !s.is_empty()).collect())
+      .unwrap_or_default();
+    path_segments.is_empty()
+  } else {
+    false
+  }
 }
 
 fn _filter_links(data: FilterLinksCall) -> std::result::Result<FilterLinksResult, String> {
@@ -163,6 +251,7 @@ fn _filter_links(data: FilterLinksCall) -> std::result::Result<FilterLinksResult
     };
 
     let path = url.path();
+    let url_str = url.as_str();
 
     if get_url_depth(path) > data.max_depth {
       denial_reasons.insert(link, DEPTH_LIMIT.to_string());
@@ -174,35 +263,70 @@ fn _filter_links(data: FilterLinksCall) -> std::result::Result<FilterLinksResult
       continue;
     }
 
-    if !data.allow_backward_crawling && !path.starts_with(initial_path) {
-      denial_reasons.insert(link, BACKWARD_CRAWLING.to_string());
-      continue;
-    }
-
-    let match_target = if data.regex_on_full_url {
-      url.as_str()
-    } else {
-      path
-    };
-
-    if !excludes_regex.is_empty() && excludes_regex.iter().any(|r| r.is_match(match_target)) {
-      denial_reasons.insert(link, EXCLUDE_PATTERN.to_string());
-      continue;
-    }
-
-    if !includes_regex.is_empty() && !includes_regex.iter().any(|r| r.is_match(match_target)) {
-      denial_reasons.insert(link, INCLUDE_PATTERN.to_string());
-      continue;
-    }
-
-    if let Some(ref robot) = robot {
-      if !robot.allowed(url.as_str()) {
-        denial_reasons.insert(link, ROBOTS_TXT.to_string());
+    if is_internal_link(&url, &base_url) {
+      // INTERNAL LINKS
+      if !no_sections(url_str) {
+        denial_reasons.insert(link, SECTION_LINK.to_string());
         continue;
       }
-    }
 
-    result_links.push(link);
+      if !data.allow_backward_crawling && !path.starts_with(initial_path) {
+        denial_reasons.insert(link, BACKWARD_CRAWLING.to_string());
+        continue;
+      }
+
+      let match_target = if data.regex_on_full_url {
+        url_str
+      } else {
+        path
+      };
+
+      if !excludes_regex.is_empty() && excludes_regex.iter().any(|r| r.is_match(match_target)) {
+        denial_reasons.insert(link, EXCLUDE_PATTERN.to_string());
+        continue;
+      }
+
+      if !includes_regex.is_empty() && !includes_regex.iter().any(|r| r.is_match(match_target)) {
+        denial_reasons.insert(link, INCLUDE_PATTERN.to_string());
+        continue;
+      }
+
+      if let Some(ref robot) = robot {
+        if !robot.allowed(url_str) {
+          denial_reasons.insert(link, ROBOTS_TXT.to_string());
+          continue;
+        }
+      }
+
+      result_links.push(link);
+    } else {
+      // EXTERNAL LINKS
+      if is_social_media_or_email(url_str) {
+        denial_reasons.insert(link, SOCIAL_MEDIA.to_string());
+        continue;
+      }
+
+      if !excludes_regex.is_empty() && excludes_regex.iter().any(|r| r.is_match(url_str)) {
+        denial_reasons.insert(link, EXCLUDE_PATTERN.to_string());
+        continue;
+      }
+
+      if is_internal_link(&initial_url, &base_url) 
+        && data.allow_external_content_links 
+        && !is_external_main_page(url_str) {
+        result_links.push(link);
+        continue;
+      }
+
+      if data.allow_subdomains 
+        && !is_social_media_or_email(url_str) 
+        && is_subdomain(&url, &base_url) {
+        result_links.push(link);
+        continue;
+      }
+
+      denial_reasons.insert(link, EXTERNAL_LINK.to_string());
+    }
   }
 
   Ok(FilterLinksResult {
@@ -216,6 +340,170 @@ fn _filter_links(data: FilterLinksCall) -> std::result::Result<FilterLinksResult
 pub fn filter_links(data: FilterLinksCall) -> Result<FilterLinksResult> {
   _filter_links(data)
     .map_err(|e| Error::new(Status::GenericFailure, format!("Filter links error: {e}")))
+}
+
+fn _filter_url(data: FilterUrlCall) -> std::result::Result<FilterUrlResult, String> {
+  let mut full_url = data.href.clone();
+  
+  // Handle relative URLs
+  if !data.href.starts_with("http") {
+    match Url::parse(&data.url) {
+      Ok(base) => {
+        match base.join(&data.href) {
+          Ok(resolved) => full_url = resolved.to_string(),
+          Err(_) => {
+            return Ok(FilterUrlResult {
+              allowed: false,
+              url: None,
+              denial_reason: Some(URL_PARSE_ERROR.to_string()),
+            });
+          }
+        }
+      }
+      Err(_) => {
+        return Ok(FilterUrlResult {
+          allowed: false,
+          url: None,
+          denial_reason: Some(URL_PARSE_ERROR.to_string()),
+        });
+      }
+    }
+  }
+
+  let url = match Url::parse(&full_url) {
+    Ok(url) => url,
+    Err(_) => {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(URL_PARSE_ERROR.to_string()),
+      });
+    }
+  };
+
+  let base_url = match Url::parse(&data.base_url) {
+    Ok(url) => url,
+    Err(_) => {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(URL_PARSE_ERROR.to_string()),
+      });
+    }
+  };
+
+  let path = url.path();
+  let url_str = url.as_str();
+
+  let excludes_regex: Vec<Regex> = data
+    .excludes
+    .iter()
+    .filter_map(|e| Regex::new(e).ok())
+    .collect();
+
+  let robot = if !data.ignore_robots_txt && !data.robots_txt.is_empty() {
+    Robot::new("FireCrawlAgent", data.robots_txt.as_bytes())
+      .ok()
+      .or_else(|| Robot::new("FirecrawlAgent", data.robots_txt.as_bytes()).ok())
+  } else {
+    None
+  };
+
+  if is_internal_link(&url, &base_url) {
+    // INTERNAL LINKS
+    if !no_sections(url_str) {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(SECTION_LINK.to_string()),
+      });
+    }
+
+    if !excludes_regex.is_empty() && excludes_regex.iter().any(|r| r.is_match(path)) {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(EXCLUDE_PATTERN.to_string()),
+      });
+    }
+
+    if let Some(ref robot) = robot {
+      if !robot.allowed(url_str) {
+        return Ok(FilterUrlResult {
+          allowed: false,
+          url: None,
+          denial_reason: Some(ROBOTS_TXT.to_string()),
+        });
+      }
+    }
+
+    Ok(FilterUrlResult {
+      allowed: true,
+      url: Some(full_url),
+      denial_reason: None,
+    })
+  } else {
+    // EXTERNAL LINKS
+    if is_social_media_or_email(url_str) {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(SOCIAL_MEDIA.to_string()),
+      });
+    }
+
+    if !excludes_regex.is_empty() && excludes_regex.iter().any(|r| r.is_match(url_str)) {
+      return Ok(FilterUrlResult {
+        allowed: false,
+        url: None,
+        denial_reason: Some(EXCLUDE_PATTERN.to_string()),
+      });
+    }
+
+    let context_url = match Url::parse(&data.url) {
+      Ok(url) => url,
+      Err(_) => {
+        return Ok(FilterUrlResult {
+          allowed: false,
+          url: None,
+          denial_reason: Some(URL_PARSE_ERROR.to_string()),
+        });
+      }
+    };
+
+    if is_internal_link(&context_url, &base_url) 
+      && data.allow_external_content_links 
+      && !is_external_main_page(url_str) {
+      return Ok(FilterUrlResult {
+        allowed: true,
+        url: Some(full_url),
+        denial_reason: None,
+      });
+    }
+
+    if data.allow_subdomains 
+      && !is_social_media_or_email(url_str) 
+      && is_subdomain(&url, &base_url) {
+      return Ok(FilterUrlResult {
+        allowed: true,
+        url: Some(full_url),
+        denial_reason: None,
+      });
+    }
+
+    Ok(FilterUrlResult {
+      allowed: false,
+      url: None,
+      denial_reason: Some(EXTERNAL_LINK.to_string()),
+    })
+  }
+}
+
+/// Filter a single URL based on crawling rules and constraints.
+#[napi]
+pub fn filter_url(data: FilterUrlCall) -> Result<FilterUrlResult> {
+  _filter_url(data)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Filter URL error: {e}")))
 }
 
 fn _parse_sitemap_xml(xml_content: &str) -> std::result::Result<ParsedSitemap, String> {
@@ -527,6 +815,8 @@ mod tests {
       initial_url: "https://example.com".to_string(),
       regex_on_full_url: false,
       allow_backward_crawling: true,
+      allow_external_content_links: false,
+      allow_subdomains: false,
     };
 
     let result = _filter_links(data).unwrap();
@@ -559,6 +849,8 @@ mod tests {
       initial_url: "https://example.com".to_string(),
       regex_on_full_url: false,
       allow_backward_crawling: true,
+      allow_external_content_links: false,
+      allow_subdomains: false,
     };
 
     let result = _filter_links(data);
@@ -586,6 +878,8 @@ mod tests {
       initial_url: "https://example.com".to_string(),
       regex_on_full_url: false,
       allow_backward_crawling: true,
+      allow_external_content_links: false,
+      allow_subdomains: false,
     };
 
     let result = _filter_links(data);
@@ -611,6 +905,8 @@ mod tests {
       initial_url: "https://example.com".to_string(),
       regex_on_full_url: false,
       allow_backward_crawling: true,
+      allow_external_content_links: false,
+      allow_subdomains: false,
     };
 
     let result = _filter_links(data);

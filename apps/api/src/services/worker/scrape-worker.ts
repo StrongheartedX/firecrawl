@@ -72,6 +72,7 @@ import {
   ScrapeJobSingleUrls,
 } from "../../types";
 import { scrapeSitemap } from "../../scraper/crawler/sitemap";
+import { filterUrl } from "@mendable/firecrawl-rs";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -254,7 +255,7 @@ async function processJob(job: NuQJob<ScrapeJobSingleUrls>) {
           sc,
           (await getACUCTeam(job.data.team_id))?.flags ?? null,
         );
-        const filterResult = crawler.filterURL(
+        const filterResult = await crawler.filterURL(
           doc.metadata.url,
           doc.metadata.sourceURL,
         );
@@ -696,7 +697,7 @@ async function kickoffGetIndexLinks(
   );
 
   const validIndexLinksResult = await crawler.filterLinks(
-    index.filter(x => crawler.filterURL(x, trimmedURL.href).allowed),
+    index,
     sc.crawlerOptions.limit ?? 10000,
     sc.crawlerOptions.maxDepth ?? 10,
     false,
