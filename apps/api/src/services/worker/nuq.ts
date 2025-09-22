@@ -2,8 +2,16 @@ import { Logger } from "winston";
 import { logger } from "../../lib/logger";
 import { Client, Pool } from "pg";
 import { type ScrapeJobData } from "../../types";
+import {
+  initializeRabbitMQ,
+  getRabbitMQService,
+  shutdownRabbitMQ,
+} from "./nuq-rabbitmq";
 
 // === Basics
+
+// Initialize RabbitMQ service if URL is provided
+const rabbitmqService = initializeRabbitMQ();
 
 const nuqPool = new Pool({
   connectionString: process.env.NUQ_DATABASE_URL, // may be a pgbouncer transaction pooler URL
@@ -317,8 +325,9 @@ class NuQ<JobData = any, JobReturnValue = any> {
     }
   }
 
-  private readonly nuqWaitMode =
-    process.env.NUQ_WAIT_MODE === "listen"
+  private readonly nuqWaitMode = rabbitmqService
+    ? ("rabbitmq" as const)
+    : process.env.NUQ_WAIT_MODE === "listen"
       ? ("listen" as const)
       : ("poll" as const);
 
@@ -329,7 +338,90 @@ class NuQ<JobData = any, JobReturnValue = any> {
   ): Promise<JobReturnValue> {
     const done = new Promise<JobReturnValue>(
       (async (resolve, reject) => {
-        if (this.nuqWaitMode === "listen") {
+        if (this.nuqWaitMode === "rabbitmq" && rabbitmqService) {
+          let timer: NodeJS.Timeout | null = null;
+          let unsubscribe: (() => Promise<void>) | null = null;
+
+          if (timeout !== null) {
+            timer = setTimeout(async () => {
+              if (unsubscribe) {
+                await unsubscribe();
+              }
+              reject(new Error("Timed out"));
+            }, timeout);
+          }
+
+          try {
+            unsubscribe = await rabbitmqService.subscribe(
+              this.queueName,
+              id,
+              async (status: "completed" | "failed") => {
+                if (timer) clearTimeout(timer);
+                if (unsubscribe) await unsubscribe();
+
+                const job = await this.getJob(id, _logger);
+                if (!job) {
+                  reject(new Error("Job raced out while waiting for it"));
+                } else {
+                  if (status === "completed") {
+                    resolve(job.returnvalue!);
+                  } else {
+                    reject(new Error(job.failedReason!));
+                  }
+                }
+              },
+              _logger,
+            );
+
+            // Check if the job is already done
+            const job = await this.getJob(id, _logger);
+            if (job && ["completed", "failed"].includes(job.status)) {
+              if (timer) clearTimeout(timer);
+              if (unsubscribe) await unsubscribe();
+
+              if (job.status === "completed") {
+                resolve(job.returnvalue!);
+              } else {
+                reject(new Error(job.failedReason!));
+              }
+              return;
+            }
+          } catch (error) {
+            _logger.warn("RabbitMQ subscription failed, falling back to polling", {
+              module: "nuq",
+              error,
+              scrapeId: id,
+            });
+            // Fall back to polling if RabbitMQ fails
+            if (timer) clearTimeout(timer);
+            if (unsubscribe) await unsubscribe();
+
+            // Continue to polling logic
+            const timeoutAt = timeout !== null ? Date.now() + timeout : null;
+            const poll = async function poll() {
+              try {
+                const job = await this.getJob(id, _logger);
+                if (job && ["completed", "failed"].includes(job.status)) {
+                  if (job.status === "completed") {
+                    return resolve(job.returnvalue!);
+                  } else {
+                    return reject(new Error(job.failedReason!));
+                  }
+                }
+              } catch (e) {
+                return reject(e);
+              }
+
+              if (timeoutAt && Date.now() > timeoutAt) {
+                return reject(new Error("Timed out"));
+              }
+
+              setTimeout(poll.bind(this), 500);
+            }.bind(this);
+
+            poll();
+          }
+        } else if (this.nuqWaitMode === "listen") {
           let timer: NodeJS.Timeout | null = null;
           if (timeout !== null) {
             timer = setTimeout(
@@ -470,7 +562,7 @@ class NuQ<JobData = any, JobReturnValue = any> {
   ): Promise<boolean> {
     const start = Date.now();
     try {
-      return (
+      const result = (
         (
           await nuqPool.query(
             `
@@ -481,6 +573,22 @@ class NuQ<JobData = any, JobReturnValue = any> {
           )
         ).rowCount !== 0
       );
+
+      // Publish to RabbitMQ if available
+      if (result && rabbitmqService) {
+        try {
+          await rabbitmqService.publish(this.queueName, id, "completed", _logger);
+        } catch (error) {
+          _logger.error("Failed to publish job completion to RabbitMQ", {
+            module: "nuq",
+            error,
+            jobId: id,
+          });
+          // Don't fail the operation if RabbitMQ publish fails
+        }
+      }
+
+      return result;
     } finally {
       _logger.info("nuqJobFinish metrics", {
         module: "nuq/metrics",
@@ -499,7 +607,7 @@ class NuQ<JobData = any, JobReturnValue = any> {
   ): Promise<boolean> {
     const start = Date.now();
     try {
-      return (
+      const result = (
         (
           await nuqPool.query(
             `
@@ -510,6 +618,22 @@ class NuQ<JobData = any, JobReturnValue = any> {
           )
         ).rowCount !== 0
       );
+
+      // Publish to RabbitMQ if available
+      if (result && rabbitmqService) {
+        try {
+          await rabbitmqService.publish(this.queueName, id, "failed", _logger);
+        } catch (error) {
+          _logger.error("Failed to publish job failure to RabbitMQ", {
+            module: "nuq",
+            error,
+            jobId: id,
+          });
+          // Don't fail the operation if RabbitMQ publish fails
+        }
+      }
+
+      return result;
     } finally {
       _logger.info("nuqJobFail metrics", {
         module: "nuq/metrics",
@@ -575,5 +699,6 @@ export const scrapeQueue = new NuQ<ScrapeJobData>("nuq.queue_scrape");
 
 export async function nuqShutdown() {
   await scrapeQueue.shutdown();
+  await shutdownRabbitMQ();
   await nuqPool.end();
 }

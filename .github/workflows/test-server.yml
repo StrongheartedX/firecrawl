@@ -164,6 +164,14 @@ jobs:
         image: redis
         ports:
           - 6379:6379
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+          - 15672:15672
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
     env:
       BULL_AUTH_KEY: ${{ secrets.BULL_AUTH_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -202,6 +210,7 @@ jobs:
       IDMUX_URL: ${{ secrets.IDMUX_URL }}
       LOG_ENCRYPTION_KEY: ${{ secrets.LOG_ENCRYPTION_KEY }}
       NUQ_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      RABBITMQ_URL: amqp://guest:guest@localhost:5672
       HOST: 0.0.0.0
     steps:
       - uses: actions/checkout@v5

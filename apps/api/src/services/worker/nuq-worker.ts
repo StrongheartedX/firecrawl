@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { logger as _logger } from "../../lib/logger";
 import { processJobInternal } from "./scrape-worker";
-import { scrapeQueue, nuqGetLocalMetrics, nuqHealthCheck } from "./nuq";
+import { scrapeQueue, nuqGetLocalMetrics, nuqHealthCheck, nuqShutdown } from "./nuq";
+import { getRabbitMQService } from "./nuq-rabbitmq";
 import Express from "express";
 import { _ } from "ajv";
 import { initializeBlocklist } from "../../scraper/WebScraper/utils/blocklist";
@@ -23,10 +24,17 @@ import { initializeBlocklist } from "../../scraper/WebScraper/utils/blocklist";
     res.contentType("text/plain").send(nuqGetLocalMetrics()),
   );
   app.get("/health", async (_, res) => {
-    if (await nuqHealthCheck()) {
+    const nuqHealthy = await nuqHealthCheck();
+    const rabbitmqService = getRabbitMQService();
+    const rabbitmqHealthy = rabbitmqService ? await rabbitmqService.isHealthy() : true;
+
+    if (nuqHealthy && rabbitmqHealthy) {
       res.status(200).send("OK");
     } else {
-      res.status(500).send("Not OK");
+      const issues: string[] = [];
+      if (!nuqHealthy) issues.push("NuQ");
+      if (!rabbitmqHealthy) issues.push("RabbitMQ");
+      res.status(500).send(`Not OK: ${issues.join(", ")} unhealthy`);
     }
   });
 
@@ -120,7 +128,7 @@ import { initializeBlocklist } from "../../scraper/WebScraper/utils/blocklist";
   _logger.info("NuQ worker shutting down");
 
   server.close(async () => {
-    await scrapeQueue.shutdown();
+    await nuqShutdown();
     _logger.info("NuQ worker shut down");
     process.exit(0);
   });
