@@ -7,7 +7,7 @@ import {
   type CrawlOptions,
   type PaginationConfig,
 } from "../types";
-import { HttpClient } from "../utils/httpClient";
+import { HttpClient, calculateTimeout } from "../utils/httpClient";
 import { ensureValidScrapeOptions } from "../utils/validation";
 import { normalizeAxiosError, throwForBadResponse } from "../utils/errorHandler";
 import type { HttpClient as _Http } from "../utils/httpClient";
@@ -45,7 +45,8 @@ function prepareCrawlPayload(request: CrawlRequest): Record<string, unknown> {
 export async function startCrawl(http: HttpClient, request: CrawlRequest): Promise<CrawlResponse> {
   const payload = prepareCrawlPayload(request);
   try {
-    const res = await http.post<{ success: boolean; id: string; url: string; error?: string }>("/v2/crawl", payload, undefined, request.scrapeOptions?.timeout, request.scrapeOptions?.waitFor, request.scrapeOptions?.actions);
+    const finalTimeout = calculateTimeout(request.scrapeOptions?.timeout, request.scrapeOptions?.waitFor, request.scrapeOptions?.actions);
+    const res = await http.post<{ success: boolean; id: string; url: string; error?: string }>("/v2/crawl", payload, undefined, finalTimeout);
     if (res.status !== 200 || !res.data?.success) {
       throwForBadResponse(res, "start crawl");
     }

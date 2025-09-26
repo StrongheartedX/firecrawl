@@ -84,36 +84,16 @@ export class HttpClient {
     return new Promise((r) => setTimeout(r, seconds * 1000));
   }
 
-  private calculateTotalTimeout(timeoutMs?: number, waitFor?: number, actions?: any[]): number {
-    const actionWaitTime = (actions || []).reduce((acc, action) => {
-      if (action.type === "wait") {
-        if (action.milliseconds) {
-          return acc + action.milliseconds;
-        }
-        if (action.selector) {
-          return acc + 1000;
-        }
-      }
-      return acc;
-    }, 0);
-    
-    const totalWaitTime = (waitFor || 0) + actionWaitTime;
-    return timeoutMs !== undefined ? (timeoutMs + totalWaitTime + 5000) : (this.defaultTimeoutMs + totalWaitTime);
+  post<T = any>(endpoint: string, body: Record<string, unknown>, headers?: Record<string, string>, timeoutMs?: number) {
+    return this.request<T>({ method: "post", url: endpoint, data: body, headers }, timeoutMs);
   }
 
-  post<T = any>(endpoint: string, body: Record<string, unknown>, headers?: Record<string, string>, timeoutMs?: number, waitFor?: number, actions?: any[]) {
-    const finalTimeout = this.calculateTotalTimeout(timeoutMs, waitFor, actions);
-    return this.request<T>({ method: "post", url: endpoint, data: body, headers }, finalTimeout);
+  get<T = any>(endpoint: string, headers?: Record<string, string>, timeoutMs?: number) {
+    return this.request<T>({ method: "get", url: endpoint, headers }, timeoutMs);
   }
 
-  get<T = any>(endpoint: string, headers?: Record<string, string>, timeoutMs?: number, waitFor?: number, actions?: any[]) {
-    const finalTimeout = this.calculateTotalTimeout(timeoutMs, waitFor, actions);
-    return this.request<T>({ method: "get", url: endpoint, headers }, finalTimeout);
-  }
-
-  delete<T = any>(endpoint: string, headers?: Record<string, string>, timeoutMs?: number, waitFor?: number, actions?: any[]) {
-    const finalTimeout = this.calculateTotalTimeout(timeoutMs, waitFor, actions);
-    return this.request<T>({ method: "delete", url: endpoint, headers }, finalTimeout);
+  delete<T = any>(endpoint: string, headers?: Record<string, string>, timeoutMs?: number) {
+    return this.request<T>({ method: "delete", url: endpoint, headers }, timeoutMs);
   }
 
   prepareHeaders(idempotencyKey?: string): Record<string, string> {
@@ -121,5 +101,23 @@ export class HttpClient {
     if (idempotencyKey) headers["x-idempotency-key"] = idempotencyKey;
     return headers;
   }
+}
+
+export function calculateTimeout(timeoutMs?: number, waitFor?: number, actions?: any[]): number {
+  const actionWaitTime = (actions || []).reduce((acc, action) => {
+    if (action.type === "wait") {
+      if (action.milliseconds) {
+        return acc + action.milliseconds;
+      }
+      if (action.selector) {
+        return acc + 1000;
+      }
+    }
+    return acc;
+  }, 0);
+  
+  const totalWaitTime = (waitFor || 0) + actionWaitTime;
+  const defaultTimeout = 60000;
+  return timeoutMs !== undefined ? (timeoutMs + totalWaitTime + 5000) : (defaultTimeout + totalWaitTime);
 }
 

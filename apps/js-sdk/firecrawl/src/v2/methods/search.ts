@@ -1,5 +1,5 @@
 import { type Document, type SearchData, type SearchRequest, type SearchResultWeb, type ScrapeOptions, type SearchResultNews, type SearchResultImages } from "../types";
-import { HttpClient } from "../utils/httpClient";
+import { HttpClient, calculateTimeout } from "../utils/httpClient";
 import { ensureValidScrapeOptions } from "../utils/validation";
 import { throwForBadResponse, normalizeAxiosError } from "../utils/errorHandler";
 
@@ -53,7 +53,8 @@ function transformArray<ResultType>(arr: any[]): Array<ResultType | Document> {
 export async function search(http: HttpClient, request: SearchRequest): Promise<SearchData> {
   const payload = prepareSearchPayload(request);
   try {
-    const res = await http.post<{ success: boolean; data?: Record<string, unknown>; error?: string }>("/v2/search", payload, undefined, request.timeout, request.scrapeOptions?.waitFor, request.scrapeOptions?.actions);
+    const finalTimeout = calculateTimeout(request.timeout, request.scrapeOptions?.waitFor, request.scrapeOptions?.actions);
+    const res = await http.post<{ success: boolean; data?: Record<string, unknown>; error?: string }>("/v2/search", payload, undefined, finalTimeout);
     if (res.status !== 200 || !res.data?.success) {
       throwForBadResponse(res, "search");
     }

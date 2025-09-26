@@ -824,13 +824,12 @@ export default class FirecrawlApp {
     }
 
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/search`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
 
       if (response.status === 200) {
@@ -874,13 +873,12 @@ export default class FirecrawlApp {
     const headers = this.prepareHeaders(idempotencyKey);
     let jsonData: any = { url, ...params, origin: `js-sdk@${this.version}` };
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/crawl`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
       if (response.status === 200) {
         const id: string = response.data.id;
@@ -906,13 +904,12 @@ export default class FirecrawlApp {
     const headers = this.prepareHeaders(idempotencyKey);
     let jsonData: any = { url, ...params, origin: `js-sdk@${this.version}` };
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/crawl`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
       if (response.status === 200) {
         return response.data;
@@ -1086,13 +1083,12 @@ export default class FirecrawlApp {
     let jsonData: any = { url, ...params, origin: `js-sdk@${this.version}` };
 
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/map`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
       if (response.status === 200) {
         return response.data as MapResponse;
@@ -1161,13 +1157,12 @@ export default class FirecrawlApp {
       };
     }
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/batch/scrape`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
       if (response.status === 200) {
         const id: string = response.data.id;
@@ -1195,13 +1190,12 @@ export default class FirecrawlApp {
     const headers = this.prepareHeaders(idempotencyKey);
     let jsonData: any = { urls, webhook, ignoreInvalidURLs, ...params, origin: `js-sdk@${this.version}` };
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.waitFor, params?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/batch/scrape`,
         jsonData,
         headers,
-        params?.timeout,
-        params?.waitFor,
-        params?.actions
+        finalTimeout
       );
       if (response.status === 200) {
         return response.data;
@@ -1370,13 +1364,12 @@ export default class FirecrawlApp {
     }
     
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.scrapeOptions?.waitFor, params?.scrapeOptions?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/extract`,
         { ...jsonData, schema: jsonSchema, origin: `js-sdk@${this.version}` },
         headers,
-        params?.timeout,
-        params?.scrapeOptions?.waitFor,
-        params?.scrapeOptions?.actions
+        finalTimeout
       );
 
       if (response.status === 200) {
@@ -1445,13 +1438,12 @@ export default class FirecrawlApp {
     }
 
     try {
+      const finalTimeout = this.calculateTotalTimeout(params?.timeout, params?.scrapeOptions?.waitFor, params?.scrapeOptions?.actions);
       const response: AxiosResponse = await this.postRequest(
         this.apiUrl + `/v1/extract`,
         { ...jsonData, schema: jsonSchema, origin: `js-sdk@${this.version}` },
         headers,
-        params?.timeout,
-        params?.scrapeOptions?.waitFor,
-        params?.scrapeOptions?.actions
+        finalTimeout
       );
 
       if (response.status === 200) {
@@ -1526,20 +1518,15 @@ export default class FirecrawlApp {
    * @param data - The data to send in the request.
    * @param headers - The headers for the request.
    * @param timeout - Optional timeout in milliseconds.
-   * @param waitFor - Optional waitFor time in milliseconds.
-   * @param actions - Optional actions array that may contain wait actions.
    * @returns The response from the POST request.
    */
   postRequest(
     url: string,
     data: any,
     headers: AxiosRequestHeaders,
-    timeout?: number,
-    waitFor?: number,
-    actions?: any[]
+    timeout?: number
   ): Promise<AxiosResponse> {
-    const finalTimeout = this.calculateTotalTimeout(timeout, waitFor, actions);
-    return axios.post(url, data, { headers, timeout: finalTimeout });
+    return axios.post(url, data, { headers, timeout });
   }
 
   /**

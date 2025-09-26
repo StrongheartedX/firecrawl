@@ -1,5 +1,5 @@
 import { type ExtractResponse, type ScrapeOptions, type AgentOptions } from "../types";
-import { HttpClient } from "../utils/httpClient";
+import { HttpClient, calculateTimeout } from "../utils/httpClient";
 import { ensureValidScrapeOptions } from "../utils/validation";
 import { normalizeAxiosError, throwForBadResponse } from "../utils/errorHandler";
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -43,7 +43,8 @@ function prepareExtractPayload(args: {
 export async function startExtract(http: HttpClient, args: Parameters<typeof prepareExtractPayload>[0] & { timeout?: number }): Promise<ExtractResponse> {
   const payload = prepareExtractPayload(args);
   try {
-    const res = await http.post<ExtractResponse>("/v2/extract", payload, undefined, args.scrapeOptions?.timeout);
+    const finalTimeout = calculateTimeout(args.scrapeOptions?.timeout, args.scrapeOptions?.waitFor, args.scrapeOptions?.actions);
+    const res = await http.post<ExtractResponse>("/v2/extract", payload, undefined, finalTimeout);
     if (res.status !== 200) throwForBadResponse(res, "extract");
     return res.data;
   } catch (err: any) {

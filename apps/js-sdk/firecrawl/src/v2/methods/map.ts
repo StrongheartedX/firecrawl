@@ -1,5 +1,5 @@
 import { type MapData, type MapOptions, type SearchResultWeb } from "../types";
-import { HttpClient } from "../utils/httpClient";
+import { HttpClient, calculateTimeout } from "../utils/httpClient";
 import { throwForBadResponse, normalizeAxiosError } from "../utils/errorHandler";
 
 function prepareMapPayload(url: string, options?: MapOptions): Record<string, unknown> {
@@ -20,7 +20,8 @@ function prepareMapPayload(url: string, options?: MapOptions): Record<string, un
 export async function map(http: HttpClient, url: string, options?: MapOptions): Promise<MapData> {
   const payload = prepareMapPayload(url, options);
   try {
-    const res = await http.post<{ success: boolean; error?: string; links?: Array<string | SearchResultWeb> }>("/v2/map", payload, undefined, options?.timeout);
+    const finalTimeout = calculateTimeout(options?.timeout);
+    const res = await http.post<{ success: boolean; error?: string; links?: Array<string | SearchResultWeb> }>("/v2/map", payload, undefined, finalTimeout);
     if (res.status !== 200 || !res.data?.success) {
       throwForBadResponse(res, "map");
     }

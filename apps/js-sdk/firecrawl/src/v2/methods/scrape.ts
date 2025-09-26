@@ -1,5 +1,5 @@
 import { type Document, type ScrapeOptions } from "../types";
-import { HttpClient } from "../utils/httpClient";
+import { HttpClient, calculateTimeout } from "../utils/httpClient";
 import { ensureValidScrapeOptions } from "../utils/validation";
 import { throwForBadResponse, normalizeAxiosError } from "../utils/errorHandler";
 
@@ -13,7 +13,8 @@ export async function scrape(http: HttpClient, url: string, options?: ScrapeOpti
   if (options) Object.assign(payload, options);
 
   try {
-    const res = await http.post<{ success: boolean; data?: Document; error?: string }>("/v2/scrape", payload, undefined, options?.timeout);
+    const finalTimeout = calculateTimeout(options?.timeout, options?.waitFor, options?.actions);
+    const res = await http.post<{ success: boolean; data?: Document; error?: string }>("/v2/scrape", payload, undefined, finalTimeout);
     if (res.status !== 200 || !res.data?.success) {
       throwForBadResponse(res, "scrape");
     }
