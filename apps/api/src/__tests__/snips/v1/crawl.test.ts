@@ -404,7 +404,7 @@ describe("Crawl tests", () => {
           const crawlId = res.id;
 
           const cancelResponse = await fetch(
-            `${process.env.TEST_API_URL}/v1/crawl/${crawlId}/cancel`,
+            `${process.env.TEST_API_URL}/v1/crawl/${crawlId}`,
             {
               method: "DELETE",
               headers: {
@@ -438,10 +438,25 @@ describe("Crawl tests", () => {
         expect(startResponse.statusCode).toBe(200);
         const crawlId = startResponse.body.id;
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        let attempts = 0;
+        let statusResponse;
+        do {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          statusResponse = await fetch(
+            `${process.env.TEST_API_URL}/v1/crawl/${crawlId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${identity.apiKey}`,
+              },
+            },
+          );
+          const statusData = await statusResponse.json();
+          attempts++;
+          if (statusData.status === "scraping" || attempts >= 10) break;
+        } while (attempts < 10);
 
         const cancelResponse = await fetch(
-          `${process.env.TEST_API_URL}/v1/crawl/${crawlId}/cancel`,
+          `${process.env.TEST_API_URL}/v1/crawl/${crawlId}`,
           {
             method: "DELETE",
             headers: {

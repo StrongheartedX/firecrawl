@@ -155,7 +155,22 @@ describe("Batch scrape tests", () => {
         const startData = await startResponse.json();
         const batchId = startData.id;
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        let attempts = 0;
+        let statusResponse;
+        do {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          statusResponse = await fetch(
+            `${process.env.TEST_API_URL}/v1/batch/scrape/${batchId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${identity.apiKey}`,
+              },
+            },
+          );
+          const statusData = await statusResponse.json();
+          attempts++;
+          if (statusData.status === "scraping" || attempts >= 10) break;
+        } while (attempts < 10);
 
         const cancelResponse = await fetch(
           `${process.env.TEST_API_URL}/v1/batch/scrape/${batchId}`,
