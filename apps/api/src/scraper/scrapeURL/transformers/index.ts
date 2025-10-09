@@ -72,13 +72,6 @@ async function deriveMarkdownFromHTML(
     );
   }
 
-  if (
-    document.metadata.postprocessorsUsed?.includes("youtube") &&
-    document.markdown !== undefined
-  ) {
-    return document;
-  }
-
   if (document.metadata.contentType?.includes("application/json")) {
     if (document.rawHtml === undefined) {
       throw new Error(

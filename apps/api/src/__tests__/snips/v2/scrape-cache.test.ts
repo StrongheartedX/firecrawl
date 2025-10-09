@@ -119,45 +119,6 @@ describe("V2 Scrape Default maxAge", () => {
       },
       scrapeTimeout * 2 + 20000,
     );
-
-    test(
-      "should return markdown content on cache hit for YouTube URLs with parsers",
-      async () => {
-        const url = "https://www.youtube.com/watch?v=lPRmbn7D9so";
-
-        const data1 = await scrape(
-          {
-            url,
-            formats: ["markdown", "html"],
-            parsers: ["pdf"],
-          },
-          identity,
-        );
-
-        expect(data1).toBeDefined();
-        expect(data1.markdown).toBeDefined();
-        expect(data1.markdown!.length).toBeGreaterThan(0);
-        const firstMarkdownLength = data1.markdown!.length;
-
-        await new Promise(resolve => setTimeout(resolve, 20000));
-
-        const data2 = await scrape(
-          {
-            url,
-            formats: ["markdown", "html"],
-            parsers: ["pdf"],
-          },
-          identity,
-        );
-
-        expect(data2).toBeDefined();
-        expect(data2.metadata.cacheState).toBe("hit");
-        expect(data2.markdown).toBeDefined();
-        expect(data2.markdown!.length).toBeGreaterThan(0);
-        expect(data2.markdown).toContain("youtube.com");
-      },
-      scrapeTimeout * 2 + 20000,
-    );
   } else {
     it("mocked", () => {
       expect(true).toBe(true);
