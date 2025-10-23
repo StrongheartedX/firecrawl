@@ -1401,6 +1401,45 @@ class NuQJobGroup {
       }
     });
   }
+
+  public async getByOwner(
+    ownerId: string,
+    _logger: Logger = logger,
+  ): Promise<NuQJobGroupInstance[]> {
+    return withSpan("nuq.getGroupByOwner", async span => {
+      setSpanAttributes(span, {
+        "nuq.group_name": this.groupName,
+        "nuq.owner_id": ownerId,
+      });
+
+      const start = Date.now();
+      try {
+        const result = (
+          await nuqPool.query(
+            `SELECT ${this.groupReturning.join(", ")} FROM ${this.groupName} WHERE ${this.groupName}.owner_id = $1;`,
+            [ownerId],
+          )
+        ).rows.map(x => this.rowToGroup(x)!);
+
+        setSpanAttributes(span, {
+          "nuq.groups_found": result.length,
+        });
+
+        return result;
+      } finally {
+        const duration = Date.now() - start;
+        setSpanAttributes(span, {
+          "nuq.duration_ms": duration,
+        });
+        _logger.info("nuqGetGroup metrics", {
+          module: "nuq/metrics",
+          method: "nuqGetGroupByOwner",
+          duration,
+          ownerId: ownerId,
+        });
+      }
+    });
+  }
 }
 
 export function nuqGetLocalMetrics(): string {
