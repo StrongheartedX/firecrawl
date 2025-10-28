@@ -21,9 +21,16 @@ export interface BrandingProfile {
   typography?: {
     font_families?: {
       primary?: string;
-      secondary?: string;
+      heading?: string;
       code?: string;
       [key: string]: string | undefined;
+    };
+    font_stacks?: {
+      primary?: string[];
+      heading?: string[];
+      body?: string[];
+      paragraph?: string[];
+      [key: string]: string[] | undefined;
     };
     font_sizes?: {
       h1?: string;
@@ -55,26 +62,29 @@ export interface BrandingProfile {
     [key: string]: number | string | Record<string, number> | undefined;
   };
   components?: {
-    buttons?: Record<
-      string,
-      {
-        background?: string;
-        text_color?: string;
-        hover_background?: string;
-        border_radius?: string;
-        border?: string;
-        [key: string]: string | undefined;
-      }
-    >;
-    inputs?: {
+    button_primary?: {
+      background?: string;
+      text_color?: string;
       border_color?: string;
-      focus_border_color?: string;
       border_radius?: string;
+      hover_background?: string;
+      hover_text_color?: string;
+      hover_border_color?: string;
       [key: string]: string | undefined;
     };
-    cards?: {
+    button_secondary?: {
       background?: string;
-      shadow?: string;
+      text_color?: string;
+      border_color?: string;
+      border_radius?: string;
+      hover_background?: string;
+      hover_text_color?: string;
+      hover_border_color?: string;
+      [key: string]: string | undefined;
+    };
+    input?: {
+      border_color?: string;
+      focus_border_color?: string;
       border_radius?: string;
       [key: string]: string | undefined;
     };
@@ -88,7 +98,7 @@ export interface BrandingProfile {
   images?: {
     logo?: string | null;
     favicon?: string | null;
-    default_og_image?: string | null;
+    og_image?: string | null;
     [key: string]: string | null | undefined;
   };
   animations?: {

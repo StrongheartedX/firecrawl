@@ -22,6 +22,11 @@ interface RawBrandingData {
       border: string;
       borderWidth: number | null;
     };
+    hover?: {
+      background: string | null;
+      text: string | null;
+      border: string | null;
+    };
     typography: {
       fontStack: string[];
       size: string | null;
@@ -291,13 +296,16 @@ export function processRawBranding(raw: RawBrandingData): BrandingProfile {
       text: s.text || "",
       html: "",
       classes: s.classes || "",
-      background: s.colors.background || "transparent",
-      textColor: s.colors.text || "#000000",
+      background: hexify(s.colors.background) || "transparent",
+      textColor: hexify(s.colors.text) || "#000000",
       borderColor:
         s.colors.borderWidth && s.colors.borderWidth > 0
-          ? s.colors.border
+          ? hexify(s.colors.border)
           : null,
       borderRadius: s.radius ? `${s.radius}px` : "0px",
+      hoverBackground: s.hover?.background ? hexify(s.hover.background) : null,
+      hoverTextColor: s.hover?.text ? hexify(s.hover.text) : null,
+      hoverBorderColor: s.hover?.border ? hexify(s.hover.border) : null,
     }));
 
   return {

@@ -148,6 +148,57 @@ export const brandingScript = `
   };
 
   // Get raw style data from element
+  // Get hover styles from CSS rules for an element
+  const getHoverStyles = el => {
+    try {
+      const classes = el.className;
+      const classString = typeof classes === "string" ? classes : classes?.baseVal || "";
+      const classList = classString.split(/\s+/).filter(c => c);
+      
+      let hoverBg = null;
+      let hoverColor = null;
+      let hoverBorder = null;
+
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          const rules = sheet.cssRules || sheet.rules;
+          if (!rules) continue;
+
+          for (const rule of Array.from(rules)) {
+            if (!rule.selectorText) continue;
+            
+            const hasHover = rule.selectorText.includes(":hover");
+            if (!hasHover) continue;
+
+            const matchesClass = classList.some(cls => 
+              rule.selectorText.includes('.' + cls + ':hover') || 
+              rule.selectorText.includes('.' + cls + ' ') ||
+              rule.selectorText.includes('.' + cls + ':')
+            );
+
+            if (matchesClass) {
+              if (rule.style.backgroundColor && !hoverBg) {
+                hoverBg = rule.style.backgroundColor;
+              }
+              if (rule.style.color && !hoverColor) {
+                hoverColor = rule.style.color;
+              }
+              if (rule.style.borderColor && !hoverBorder) {
+                hoverBorder = rule.style.borderColor;
+              }
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      return { hoverBg, hoverColor, hoverBorder };
+    } catch (e) {
+      return { hoverBg: null, hoverColor: null, hoverBorder: null };
+    }
+  };
+
   const getStyleSnapshot = el => {
     const cs = getComputedStyle(el);
     const rect = el.getBoundingClientRect();
@@ -180,6 +231,9 @@ export const brandingScript = `
       }
     }
 
+    const isButton = el.matches('button,[role=button],a.button,a.btn,[class*="btn"],a[class*="bg-brand"],a[class*="bg-primary"],a[class*="bg-accent"],a[class*="-button"]');
+    const hoverStyles = isButton ? getHoverStyles(el) : { hoverBg: null, hoverColor: null, hoverBorder: null };
+
     return {
       tag: el.tagName.toLowerCase(),
       classes: classNames,
@@ -191,13 +245,18 @@ export const brandingScript = `
         border: cs.getPropertyValue("border-top-color"),
         borderWidth: toPx(cs.getPropertyValue("border-top-width")),
       },
+      hover: {
+        background: hoverStyles.hoverBg,
+        text: hoverStyles.hoverColor,
+        border: hoverStyles.hoverBorder,
+      },
       typography: {
         fontStack,
         size: cs.getPropertyValue("font-size") || null,
         weight: parseInt(cs.getPropertyValue("font-weight"), 10) || null,
       },
       radius: toPx(cs.getPropertyValue("border-radius")),
-      isButton: el.matches('button,[role=button],a.button,a.btn,[class*="btn"],a[class*="bg-brand"],a[class*="bg-primary"],a[class*="bg-accent"],a[class*="-button"]'),
+      isButton,
       isInput: el.matches('input,select,textarea,[class*="form-control"]'),
       isLink: el.matches("a"),
     };

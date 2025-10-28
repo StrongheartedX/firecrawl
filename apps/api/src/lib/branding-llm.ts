@@ -106,8 +106,11 @@ export interface ButtonSnapshot {
   classes: string;
   background: string;
   textColor: string;
-  borderColor?: string;
+  borderColor?: string | null;
   borderRadius?: string;
+  hoverBackground?: string | null;
+  hoverTextColor?: string | null;
+  hoverBorderColor?: string | null;
 }
 
 interface BrandingLLMInput {
@@ -378,8 +381,11 @@ export function mergeBrandingResults(
       merged.components.button_primary = {
         background: primaryBtn.background,
         text_color: primaryBtn.textColor,
-        border_color: primaryBtn.borderColor,
+        border_color: primaryBtn.borderColor || undefined,
         border_radius: primaryBtn.borderRadius || "0px",
+        hover_background: primaryBtn.hoverBackground || undefined,
+        hover_text_color: primaryBtn.hoverTextColor || undefined,
+        hover_border_color: primaryBtn.hoverBorderColor || undefined,
       };
     }
 
@@ -389,8 +395,11 @@ export function mergeBrandingResults(
       merged.components.button_secondary = {
         background: secondaryBtn.background,
         text_color: secondaryBtn.textColor,
-        border_color: secondaryBtn.borderColor,
+        border_color: secondaryBtn.borderColor || undefined,
         border_radius: secondaryBtn.borderRadius || "0px",
+        hover_background: secondaryBtn.hoverBackground || undefined,
+        hover_text_color: secondaryBtn.hoverTextColor || undefined,
+        hover_border_color: secondaryBtn.hoverBorderColor || undefined,
       };
     }
 
@@ -434,18 +443,85 @@ export function mergeBrandingResults(
   if (llm.cleaned_fonts && llm.cleaned_fonts.length > 0) {
     merged.fonts = llm.cleaned_fonts;
 
+    // Helper to clean individual font name from stack
+    const cleanFontName = (font: string): string => {
+      const fontLower = font.toLowerCase();
+
+      // Check each LLM-cleaned font to see if it matches this raw font
+      for (const cleanedFont of llm.cleaned_fonts) {
+        const cleanedLower = cleanedFont.family.toLowerCase();
+
+        // Direct match
+        if (fontLower === cleanedLower) {
+          return cleanedFont.family;
+        }
+
+        // Check if cleaned name is contained in the raw name (e.g., "suisse" in "__suisse_6d5c28")
+        if (fontLower.includes(cleanedLower)) {
+          return cleanedFont.family;
+        }
+
+        // Check if raw name matches Next.js pattern and contains cleaned name
+        // Pattern: __name_hash or __name_Fallback_hash
+        const nextJsPattern = /^__(.+?)(?:_Fallback)?_[a-f0-9]{8}$/i;
+        const match = font.match(nextJsPattern);
+        if (match) {
+          const extractedName = match[1].toLowerCase();
+          if (
+            extractedName === cleanedLower ||
+            cleanedLower.includes(extractedName)
+          ) {
+            return cleanedFont.family;
+          }
+        }
+      }
+
+      // No match found, return original
+      return font;
+    };
+
+    // Clean font stacks by replacing obfuscated names with cleaned ones
+    if (merged.typography?.font_stacks) {
+      const cleanStack = (
+        stack: string[] | undefined,
+      ): string[] | undefined => {
+        if (!stack) return stack;
+
+        // Clean each font, then remove duplicates while preserving order
+        const cleaned = stack.map(cleanFontName);
+        const seen = new Set<string>();
+        return cleaned.filter(font => {
+          if (seen.has(font.toLowerCase())) return false;
+          seen.add(font.toLowerCase());
+          return true;
+        });
+      };
+
+      merged.typography.font_stacks = {
+        primary: cleanStack(merged.typography.font_stacks.primary),
+        heading: cleanStack(merged.typography.font_stacks.heading),
+        body: cleanStack(merged.typography.font_stacks.body),
+        paragraph: cleanStack(merged.typography.font_stacks.paragraph),
+      };
+    }
+
     // Also update typography section with cleaned font names
     if (merged.typography?.font_families) {
       // Find fonts by role from LLM
       const headingFont = llm.cleaned_fonts.find(f => f.role === "heading");
       const bodyFont = llm.cleaned_fonts.find(f => f.role === "body");
+      const displayFont = llm.cleaned_fonts.find(f => f.role === "display");
       const primaryFont = bodyFont || llm.cleaned_fonts[0]; // Default to first font
 
-      if (headingFont) {
-        merged.typography.font_families.heading = headingFont.family;
-      }
+      // Set primary (usually body font)
       if (primaryFont) {
         merged.typography.font_families.primary = primaryFont.family;
+      }
+
+      // Set heading (prefer heading role, fall back to display, then primary)
+      const headingToUse = headingFont || displayFont || primaryFont;
+      if (headingToUse) {
+        merged.typography.font_families.heading = headingToUse.family;
       }
     }
   }
