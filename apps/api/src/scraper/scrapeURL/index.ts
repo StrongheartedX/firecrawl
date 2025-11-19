@@ -437,6 +437,10 @@ async function scrapeURLLoopIter(
       });
       return engineResult;
     } else {
+      meta.logger.warn("Scrape via " + engine + " deemed unsuccessful.", {
+        factors: { isLongEnough, isGoodStatusCode, hasNoPageError },
+        length: engineResult.html?.trim().length ?? 0,
+      });
       throw new EngineUnsuccessfulError(engine);
     }
   } finally {
