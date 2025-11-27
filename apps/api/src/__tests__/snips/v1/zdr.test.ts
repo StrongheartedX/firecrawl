@@ -10,9 +10,11 @@ import {
 import { describeIf, TEST_PRODUCTION } from "../lib";
 import {
   getLogs,
-  expectJobRecordIsCleanedUp,
-  expectJobsArrayIsCleanedUp,
-  expectJobsAreFullyCleanedAfterZDRCleaner,
+  expectScrapeIsCleanedUp,
+  expectCrawlIsCleanedUp,
+  expectScrapesOfRequestAreCleanedUp,
+  expectScrapesAreFullyCleanedAfterZDRCleaner,
+  expectBatchScrapeIsCleanedUp,
 } from "../zdr-helpers";
 
 describeIf(TEST_PRODUCTION)("Zero Data Retention", () => {
@@ -43,7 +45,7 @@ describeIf(TEST_PRODUCTION)("Zero Data Retention", () => {
       const gcsJob = await getJobFromGCS(scrape1.metadata.scrapeId!);
       expect(gcsJob).toBeNull();
 
-      await expectJobRecordIsCleanedUp(scrape1.metadata.scrapeId!);
+      await expectScrapeIsCleanedUp(scrape1.metadata.scrapeId!);
 
       if (scope === "Request-scoped") {
         const status = await scrapeStatusRaw(
@@ -90,14 +92,14 @@ describeIf(TEST_PRODUCTION)("Zero Data Retention", () => {
 
       expect(postLogs).toHaveLength(0);
 
-      await expectJobRecordIsCleanedUp(crawl1.id);
+      await expectCrawlIsCleanedUp(crawl1.id);
 
-      const jobs = await expectJobsArrayIsCleanedUp(crawl1.id);
+      const scrapes = await expectScrapesOfRequestAreCleanedUp(crawl1.id);
 
       await zdrcleaner(identity.teamId!);
 
-      await expectJobsAreFullyCleanedAfterZDRCleaner(
-        jobs,
+      await expectScrapesAreFullyCleanedAfterZDRCleaner(
+        scrapes,
         scope,
         identity,
         scrapeStatusRaw,
@@ -138,14 +140,14 @@ describeIf(TEST_PRODUCTION)("Zero Data Retention", () => {
 
       expect(postLogs).toHaveLength(0);
 
-      await expectJobRecordIsCleanedUp(crawl1.id);
+      await expectBatchScrapeIsCleanedUp(crawl1.id);
 
-      const jobs = await expectJobsArrayIsCleanedUp(crawl1.id, 2);
+      const scrapes = await expectScrapesOfRequestAreCleanedUp(crawl1.id, 2);
 
       await zdrcleaner(identity.teamId!);
 
-      await expectJobsAreFullyCleanedAfterZDRCleaner(
-        jobs,
+      await expectScrapesAreFullyCleanedAfterZDRCleaner(
+        scrapes,
         scope,
         identity,
         scrapeStatusRaw,
