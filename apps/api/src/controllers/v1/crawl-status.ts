@@ -201,7 +201,7 @@ export async function crawlStatusController(
   const creditsRpc =
     process.env.USE_DB_AUTHENTICATION === "true"
       ? await supabase_service.rpc(
-          "credits_billed_by_crawl_id_1",
+          "credits_billed_by_crawl_id_2",
           {
             i_crawl_id: req.params.jobId,
           },

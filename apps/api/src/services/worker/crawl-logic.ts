@@ -130,7 +130,7 @@ export async function finishCrawlSuper(job: NuQJob<any>) {
 
     if (process.env.USE_DB_AUTHENTICATION === "true") {
       const creditsRpc = await supabase_service.rpc(
-        "credits_billed_by_crawl_id_1",
+        "credits_billed_by_crawl_id_2",
         {
           i_crawl_id: crawlId,
         },
