@@ -1443,9 +1443,12 @@ export function toLegacyDocument(
     return { url: document.metadata.sourceURL! };
   }
 
+  // backwards compatibility to v0 API
+  const markdown = document.markdown ?? "";
+
   return {
-    content: document.markdown!,
-    markdown: document.markdown!,
+    content: markdown,
+    markdown: markdown,
     html: document.html,
     rawHtml: document.rawHtml,
     linksOnPage: document.links,
