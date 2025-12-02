@@ -10,6 +10,7 @@ import { downloadFile, fetchFileToBuffer } from "../utils/downloadFile";
 import {
   PDFAntibotError,
   PDFInsufficientTimeError,
+  PDFParsingError,
   PDFPrefetchFailed,
   RemoveFeatureError,
   EngineUnsuccessfulError,
@@ -87,7 +88,9 @@ async function scrapePDFWithRunPodMU(
         const resp = await robustFetch({
           url: process.env.PDF_MU_V2_BASE_URL ?? "",
           method: "POST",
-          headers: process.env.PDF_MU_V2_API_KEY ? { Authorization: `Bearer ${process.env.PDF_MU_V2_API_KEY}` } : undefined,
+          headers: process.env.PDF_MU_V2_API_KEY
+            ? { Authorization: `Bearer ${process.env.PDF_MU_V2_API_KEY}` }
+            : undefined,
           body: {
             input: {
               file_content: base64Content,
@@ -337,7 +340,20 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
       }
     }
 
-    const pdfMetadata = await getPdfMetadata(tempFilePath);
+    let pdfMetadata: { numPages: number; title?: string };
+    try {
+      pdfMetadata = await getPdfMetadata(tempFilePath);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      meta.logger.error("Failed to extract PDF metadata", {
+        error,
+        tempFilePath,
+        url: meta.rewrittenUrl ?? meta.url,
+      });
+      Sentry.captureException(error);
+      throw new PDFParsingError(errorMessage, "metadata");
+    }
     const effectivePageCount = maxPages
       ? Math.min(pdfMetadata.numPages, maxPages)
       : pdfMetadata.numPages;
@@ -410,15 +426,27 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
 
     // If RunPod MU failed or wasn't attempted, use PdfParse
     if (!result) {
-      result = await scrapePDFWithParsePDF(
-        {
-          ...meta,
-          logger: meta.logger.child({
-            method: "scrapePDF/scrapePDFWithParsePDF",
-          }),
-        },
-        tempFilePath,
-      );
+      try {
+        result = await scrapePDFWithParsePDF(
+          {
+            ...meta,
+            logger: meta.logger.child({
+              method: "scrapePDF/scrapePDFWithParsePDF",
+            }),
+          },
+          tempFilePath,
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        meta.logger.error("Failed to parse PDF content", {
+          error,
+          tempFilePath,
+          url: meta.rewrittenUrl ?? meta.url,
+        });
+        Sentry.captureException(error);
+        throw new PDFParsingError(errorMessage, "content");
+      }
     }
 
     return {

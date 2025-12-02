@@ -243,6 +243,36 @@ export class PDFInsufficientTimeError extends TransportableError {
   }
 }
 
+export class PDFParsingError extends TransportableError {
+  constructor(
+    public reason: string,
+    public stage: "metadata" | "content",
+  ) {
+    const message = isSelfHosted()
+      ? `Failed to parse PDF during ${stage} extraction: ${reason}. Check your server logs for more details.`
+      : `Failed to parse PDF during ${stage} extraction: ${reason}. If the issue persists, contact us at help@firecrawl.com.`;
+
+    super("SCRAPE_PDF_PARSING_ERROR", message);
+  }
+
+  serialize() {
+    return {
+      ...super.serialize(),
+      reason: this.reason,
+      stage: this.stage,
+    };
+  }
+
+  static deserialize(
+    _: ErrorCodes,
+    data: ReturnType<typeof this.prototype.serialize>,
+  ) {
+    const x = new PDFParsingError(data.reason, data.stage);
+    x.stack = data.stack;
+    return x;
+  }
+}
+
 export class DNSResolutionError extends TransportableError {
   constructor(public hostname: string) {
     super(

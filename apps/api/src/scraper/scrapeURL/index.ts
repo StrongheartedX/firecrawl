@@ -28,6 +28,7 @@ import {
   EngineError,
   NoEnginesLeftError,
   PDFAntibotError,
+  PDFParsingError,
   DocumentAntibotError,
   RemoveFeatureError,
   SiteError,
@@ -635,6 +636,7 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
               error.error instanceof ActionError ||
               error.error instanceof UnsupportedFileError ||
               error.error instanceof PDFAntibotError ||
+              error.error instanceof PDFParsingError ||
               error.error instanceof DocumentAntibotError ||
               error.error instanceof PDFInsufficientTimeError ||
               error.error instanceof ProxySelectionError ||
