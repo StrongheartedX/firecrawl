@@ -172,6 +172,20 @@ export async function createUserController(req: Request, res: Response) {
         }
         teamId = newTeam.id;
 
+        const { error: newUserTeamError } = await supabase_service
+          .from("user_teams")
+          .insert({
+            user_id: preexistingUser[0].id,
+            team_id: teamId,
+          });
+
+        if (newUserTeamError) {
+          logger.error("Failed to add user to team", {
+            error: newUserTeamError,
+          });
+          return res.status(500).json({ error: "Failed to add user to team" });
+        }
+
         const { data: newApiKey, error: newApiKeyError } =
           await supabase_service
             .from("api_keys")
