@@ -29,7 +29,7 @@ export async function analyzeSchemaAndPrompt_F0(
 
   const schemaString = JSON.stringify(schema);
 
-  const model = getModel("gpt-4o");
+  const model = getModel("gpt-4o-mini");
 
   const checkSchema = z
     .object({

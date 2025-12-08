@@ -141,7 +141,7 @@ export async function rerankLinksWithLLM(
           let completion: any;
           try {
             const completionPromise = generateCompletions({
-              model: getModel("gemini-2.5-pro", "vertex"),
+              model: getModel("gpt-4o-mini", "openai"),
               retryModel: getModel("gemini-2.5-pro", "google"),
               logger: logger.child({
                 method: "rerankLinksWithLLM",
