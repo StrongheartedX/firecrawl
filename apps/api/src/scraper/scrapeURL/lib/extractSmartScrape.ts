@@ -453,7 +453,7 @@ export async function extractData({
             ...extractOptions,
             markdown: markdown,
             model: getModel("gpt-4o-mini", "openai"),
-            retryModel: getModel("gemini-2.5-pro", "google"),
+            retryModel: getModel("gpt-4o", "openai"),
             costTrackingOptions: {
               costTracking: extractOptions.costTrackingOptions.costTracking,
               metadata: {
