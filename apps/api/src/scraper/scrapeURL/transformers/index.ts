@@ -87,6 +87,19 @@ async function deriveMarkdownFromHTML(
     return document;
   }
 
+  // JSON content type needs special formatting JSON properly takes precedence over reusing markdown
+  // JSON content needs to be wrapped in ```json code blocks, not converted from HTML
+  if (document.metadata.contentType?.includes("application/json")) {
+    if (document.rawHtml === undefined) {
+      throw new Error(
+        "rawHtml is undefined -- this transformer is being called out of order",
+      );
+    }
+
+    document.markdown = "```json\n" + document.rawHtml + "\n```";
+    return document;
+  }
+
   // If markdown already exists (pre-computed from quality check), reuse it
   // unless we need to retry with full content (onlyMainContent fallback)
   if (
@@ -96,17 +109,6 @@ async function deriveMarkdownFromHTML(
       document.markdown.trim().length === 0
     )
   ) {
-    return document;
-  }
-
-  if (document.metadata.contentType?.includes("application/json")) {
-    if (document.rawHtml === undefined) {
-      throw new Error(
-        "rawHtml is undefined -- this transformer is being called out of order",
-      );
-    }
-
-    document.markdown = "```json\n" + document.rawHtml + "\n```";
     return document;
   }
 
