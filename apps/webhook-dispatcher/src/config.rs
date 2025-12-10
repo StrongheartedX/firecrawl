@@ -8,6 +8,7 @@ pub struct Config {
     pub supabase_service_token: String,
     pub retry_delay_ms: u64,
     pub max_retries: u32,
+    pub prefetch_count: u16,
 }
 
 impl Config {
@@ -27,6 +28,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
+            prefetch_count: env::var("WEBHOOK_PREFETCH_COUNT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
         })
     }
 }

@@ -74,12 +74,8 @@ async fn run_inner(config: &Config, shutdown_rx: &mut broadcast::Receiver<()>) -
         )
         .await?;
 
-    let prefetch = std::env::var("WEBHOOK_PREFETCH_COUNT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
     channel
-        .basic_qos(prefetch, BasicQosOptions::default())
+        .basic_qos(config.prefetch_count, BasicQosOptions::default())
         .await?;
 
     let mut consumer = channel
@@ -93,9 +89,13 @@ async fn run_inner(config: &Config, shutdown_rx: &mut broadcast::Receiver<()>) -
     let dispatcher = WebhookDispatcher::new(&config.supabase_url, &config.supabase_service_token);
 
     let mut tasks = JoinSet::new();
-    let max_concurrent = prefetch as usize;
+    let max_concurrent = config.prefetch_count as usize;
 
-    tracing::info!(queue = QUEUE_NAME, prefetch, "Consumer started");
+    tracing::info!(
+        queue = QUEUE_NAME,
+        prefetch = config.prefetch_count,
+        "Consumer started"
+    );
 
     loop {
         tokio::select! {
