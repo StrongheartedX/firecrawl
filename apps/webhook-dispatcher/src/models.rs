@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WebhookQueueMessage {
     pub webhook_url: String,
     pub payload: WebhookPayload,
@@ -11,13 +11,17 @@ pub struct WebhookQueueMessage {
     pub scrape_id: Option<String>,
     pub event: String,
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub retry_count: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WebhookPayload {
     pub success: bool,
     #[serde(rename = "type")]
     pub event_type: String,
+    #[serde(rename = "webhookId")]
+    pub webhook_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]

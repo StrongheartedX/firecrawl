@@ -10,6 +10,7 @@ export type WebhookQueueMessage = {
   payload: {
     success: boolean;
     type: string;
+    webhookId: string;
     id?: string;
     jobId?: string;
     data: any[];

@@ -10,6 +10,7 @@ import { WebhookConfig, WebhookEvent, WebhookEventDataMap } from "./types";
 import { redisEvictConnection } from "../redis";
 import { supabase_service } from "../supabase";
 import { webhookQueue, WebhookQueueMessage } from "./queue";
+import { randomUUID } from "crypto";
 
 const WEBHOOK_INSERT_QUEUE_KEY = "webhook-insert-queue";
 const WEBHOOK_INSERT_BATCH_SIZE = 1000;
@@ -46,6 +47,7 @@ export class WebhookSender {
       success: data.success,
       type: event,
       [this.context.v0 ? "jobId" : "id"]: this.context.jobId,
+      webhookId: randomUUID(), // Unique ID for this webhook delivery (used for e.g. retries)
       data: "data" in data ? data.data : [],
       error: "error" in data ? data.error : undefined,
       metadata: this.config.metadata || undefined,
@@ -96,6 +98,8 @@ export class WebhookSender {
         event: payload.type,
         timeout_ms: this.context.v0 ? 30000 : 10000,
       };
+
+      console.log(queueMessage);
 
       try {
         await webhookQueue.publish(queueMessage);

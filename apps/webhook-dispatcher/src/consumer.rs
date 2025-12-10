@@ -1,17 +1,18 @@
 use crate::config::Config;
-use crate::dispatcher::WebhookDispatcher;
+use crate::dispatcher::{DispatchResult, WebhookDispatcher};
 use crate::models::WebhookQueueMessage;
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use lapin::{
     options::*,
     types::{FieldTable, LongString},
-    Connection, ConnectionProperties,
+    BasicProperties, Connection, ConnectionProperties,
 };
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
 const QUEUE_NAME: &str = "webhooks";
+const RETRY_QUEUE_NAME: &str = "webhooks_retry";
 
 pub async fn run(config: Config, mut shutdown_rx: broadcast::Receiver<()>) -> Result<()> {
     loop {
@@ -48,6 +49,28 @@ async fn run_inner(config: &Config, shutdown_rx: &mut broadcast::Receiver<()>) -
                 ..Default::default()
             },
             args,
+        )
+        .await?;
+
+    let mut retry_args = FieldTable::default();
+    retry_args.insert("x-dead-letter-exchange".into(), LongString::from("").into());
+    retry_args.insert(
+        "x-dead-letter-routing-key".into(),
+        LongString::from(QUEUE_NAME).into(),
+    );
+    retry_args.insert(
+        "x-message-ttl".into(),
+        (config.retry_delay_ms as i64).into(),
+    );
+
+    channel
+        .queue_declare(
+            RETRY_QUEUE_NAME,
+            QueueDeclareOptions {
+                durable: true,
+                ..Default::default()
+            },
+            retry_args,
         )
         .await?;
 
@@ -89,8 +112,10 @@ async fn run_inner(config: &Config, shutdown_rx: &mut broadcast::Receiver<()>) -
                 match delivery {
                     Some(Ok(delivery)) => {
                         let d = dispatcher.clone();
+                        let c = channel.clone();
+                        let max_retries = config.max_retries;
                         tasks.spawn(async move {
-                            let res = process_message(&d, &delivery.data).await;
+                            let res = process_message(&d, &c, &delivery.data, max_retries).await;
                             (delivery, res)
                         });
                     }
@@ -131,8 +156,13 @@ async fn handle_result(
     Ok(())
 }
 
-async fn process_message(dispatcher: &WebhookDispatcher, data: &[u8]) -> Result<()> {
-    let message: WebhookQueueMessage = match serde_json::from_slice(data) {
+async fn process_message(
+    dispatcher: &WebhookDispatcher,
+    channel: &lapin::Channel,
+    data: &[u8],
+    max_retries: u32,
+) -> Result<()> {
+    let mut message: WebhookQueueMessage = match serde_json::from_slice(data) {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "Malformed message, discarding");
@@ -140,6 +170,39 @@ async fn process_message(dispatcher: &WebhookDispatcher, data: &[u8]) -> Result<
         }
     };
 
-    dispatcher.dispatch(message).await?;
-    Ok(())
+    let result = dispatcher.dispatch(&message).await?;
+
+    match result {
+        DispatchResult::Success | DispatchResult::FatalError => Ok(()),
+        DispatchResult::RetryableError => {
+            if message.retry_count < max_retries {
+                message.retry_count += 1;
+                tracing::info!(
+                    job_id = %message.job_id,
+                    retry = message.retry_count,
+                    max = max_retries,
+                    "Scheduling retry"
+                );
+
+                let payload = serde_json::to_vec(&message)?;
+                channel
+                    .basic_publish(
+                        "",
+                        RETRY_QUEUE_NAME,
+                        BasicPublishOptions::default(),
+                        &payload,
+                        BasicProperties::default(),
+                    )
+                    .await
+                    .context("Failed to publish retry")?;
+            } else {
+                tracing::warn!(
+                    job_id = %message.job_id,
+                    attempts = message.retry_count,
+                    "Max retries reached, discarding"
+                );
+            }
+            Ok(())
+        }
+    }
 }
