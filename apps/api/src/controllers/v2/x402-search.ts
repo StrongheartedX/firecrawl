@@ -644,7 +644,7 @@ export async function x402SearchController(
     }
 
     captureExceptionWithZdrCheck(error, {
-      extra: { zeroDataRetention: zeroDataRetention ?? false },
+      extra: { zeroDataRetention: false },
     });
     logger.error("Unhandled error occurred in search [x402]", { error });
     return res.status(500).json({

@@ -504,7 +504,7 @@ export async function searchController(
     }
 
     captureExceptionWithZdrCheck(error, {
-      extra: { zeroDataRetention: zeroDataRetention ?? false },
+      extra: { zeroDataRetention: false },
     });
     logger.error("Unhandled error occurred in search", {
       version: "v1",

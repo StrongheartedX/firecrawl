@@ -245,6 +245,8 @@ export async function searchController(
 
   let credits_billed = 0;
 
+  let zeroDataRetention = false;
+
   try {
     req.body = searchRequestSchema.parse(req.body);
 
@@ -257,6 +259,7 @@ export async function searchController(
     const isZDR = req.body.enterprise?.includes("zdr");
     const isAnon = req.body.enterprise?.includes("anon");
     const isZDROrAnon = isZDR || isAnon;
+    zeroDataRetention = isZDROrAnon ?? false;
     applyZdrScope(isZDROrAnon ?? false);
 
     await logRequest({
@@ -761,7 +764,7 @@ export async function searchController(
     }
 
     captureExceptionWithZdrCheck(error, {
-      extra: { zeroDataRetention: isZDROrAnon ?? false },
+      extra: { zeroDataRetention },
     });
     logger.error("Unhandled error occurred in search", {
       version: "v2",
