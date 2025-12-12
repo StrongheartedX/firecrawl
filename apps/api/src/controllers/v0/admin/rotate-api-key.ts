@@ -56,7 +56,6 @@ export async function integRotateApiKeyController(req: Request, res: Response) {
       return res.status(400).json({ error: "API key is invalid" });
     }
 
-    // Look up the API key
     const { data: apiKeyData, error: apiKeyError } = await supabase_service
       .from("api_keys")
       .select("*")
@@ -76,7 +75,6 @@ export async function integRotateApiKeyController(req: Request, res: Response) {
 
     logger = logger.child({ teamId });
 
-    // Verify the team belongs to this integration
     const { data: teamData, error: teamError } = await supabase_service
       .from("teams")
       .select("*")
@@ -97,20 +95,6 @@ export async function integRotateApiKeyController(req: Request, res: Response) {
       return res.status(404).json({ error: "API key not found" });
     }
 
-    // Delete the leaked API key
-    const { error: deleteError } = await supabase_service
-      .from("api_keys")
-      .delete()
-      .eq("key", normalizedApiKey)
-      .eq("team_id", teamId)
-      .eq("owner_id", ownerId);
-
-    if (deleteError) {
-      logger.error("Failed to delete leaked API key", { error: deleteError });
-      return res.status(500).json({ error: "Failed to delete leaked API key" });
-    }
-
-    // Create a new API key
     const { data: newApiKey, error: newApiKeyError } = await supabase_service
       .from("api_keys")
       .insert({
@@ -124,6 +108,18 @@ export async function integRotateApiKeyController(req: Request, res: Response) {
     if (newApiKeyError) {
       logger.error("Failed to create new API key", { error: newApiKeyError });
       return res.status(500).json({ error: "Failed to create new API key" });
+    }
+
+    const { error: deleteError } = await supabase_service
+      .from("api_keys")
+      .delete()
+      .eq("key", normalizedApiKey)
+      .eq("team_id", teamId)
+      .eq("owner_id", ownerId);
+
+    if (deleteError) {
+      logger.error("Failed to delete leaked API key", { error: deleteError });
+      logger.warn("Old API key may still be active", { oldKey: normalizedApiKey });
     }
 
     logger.info("Rotated API key", { teamId });
