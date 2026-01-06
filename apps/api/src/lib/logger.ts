@@ -4,25 +4,26 @@ import { config } from "../config";
 import { configDotenv } from "dotenv";
 configDotenv();
 
-const logFormat = winston.format.printf(info => {
-  const metadataStr =
-    Object.keys(info.metadata || {}).length > 0
-      ? JSON.stringify(info.metadata, (_, value) => {
-          if (value instanceof Error) {
-            return {
-              ...value,
-              name: value.name,
-              message: value.message,
-              stack: value.stack,
-              cause: value.cause,
-            };
-          } else {
-            return value;
-          }
-        })
-      : "";
-  return `${info.timestamp} ${info.level} [${info.metadata.module ?? ""}:${info.metadata.method ?? ""}]: ${info.message}${metadataStr ? " " + metadataStr : ""}`;
-});
+const logFormat = winston.format.printf(
+  info =>
+    `${info.timestamp} ${info.level} [${info.metadata.module ?? ""}:${info.metadata.method ?? ""}]: ${info.message} ${
+      info.level.includes("error") || info.level.includes("warn")
+        ? JSON.stringify(info.metadata, (_, value) => {
+            if (value instanceof Error) {
+              return {
+                ...value,
+                name: value.name,
+                message: value.message,
+                stack: value.stack,
+                cause: value.cause,
+              };
+            } else {
+              return value;
+            }
+          })
+        : ""
+    }`,
+);
 
 // Filter function to prevent logging when zeroDataRetention is true
 const zeroDataRetentionFilter = winston.format(info => {
