@@ -8,10 +8,13 @@ export class TeamSimulator {
   private config: StressTestConfig;
   private jobTimeout: number = 600_000; // 10 minutes
   private correctnessChecker?: CorrectnessChecker;
+  private runId: string;
 
   constructor(config: StressTestConfig, correctnessChecker?: CorrectnessChecker) {
     this.config = config;
     this.correctnessChecker = correctnessChecker;
+    // Unique run ID to prevent job ID collisions with previous test runs
+    this.runId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     this.initializeTeams();
   }
 
@@ -83,16 +86,16 @@ export class TeamSimulator {
     return team.activeJobs.size < team.tier.concurrencyLimit;
   }
 
-  // Generate a new job ID for a team
+  // Generate a new job ID for a team (includes runId for uniqueness across test runs)
   generateJobId(team: TeamState): string {
     team.jobCounter++;
-    return `${team.teamId}-job-${team.jobCounter}`;
+    return `${team.teamId}-${this.runId}-job-${team.jobCounter}`;
   }
 
-  // Maybe generate a crawl ID (20% chance)
+  // Maybe generate a crawl ID (20% chance, includes runId for uniqueness)
   maybeGenerateCrawlId(team: TeamState): string | undefined {
     if (Math.random() < 0.2) {
-      return `${team.teamId}-crawl-${Math.floor(team.jobCounter / 10)}`;
+      return `${team.teamId}-${this.runId}-crawl-${Math.floor(team.jobCounter / 10)}`;
     }
     return undefined;
   }
@@ -198,8 +201,9 @@ export class TeamSimulator {
 
         // Calculate average job time from current active jobs
         // (In a real scenario, we'd track this more precisely)
+        const now = Date.now();
         for (const [, job] of team.activeJobs) {
-          totalJobTimeMs += performance.now() - job.startTime;
+          totalJobTimeMs += now - job.startTime;
           jobCount++;
         }
       }

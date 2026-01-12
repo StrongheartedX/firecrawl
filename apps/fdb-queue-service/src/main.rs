@@ -97,13 +97,21 @@ async fn async_main(_network: foundationdb::api::NetworkAutoStop) -> Result<(), 
         .route("/sample/teams", get(handlers::sample_team_counters))
         .route("/sample/crawls", get(handlers::sample_crawl_counters))
 
+        // HTTP tracing for debugging
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!("FDB Queue Service listening on port {}", port);
 
-    axum::serve(listener, app).await?;
+    // Configure TCP settings for high concurrency
+    let tcp_nodelay = std::env::var("TCP_NODELAY")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(true); // Enable by default for lower latency
+
+    axum::serve(listener, app)
+        .tcp_nodelay(tcp_nodelay)
+        .await?;
 
     Ok(())
 }

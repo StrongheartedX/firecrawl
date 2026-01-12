@@ -234,4 +234,95 @@ export class FDBQueueClient {
       return false;
     }
   }
+
+  // === Flush Operations (for clearing old data before tests) ===
+
+  /**
+   * Flush all jobs from a team's queue by repeatedly popping until empty.
+   * Does not record metrics or correctness data.
+   * Returns the number of jobs flushed.
+   */
+  async flushTeamQueue(teamId: string): Promise<number> {
+    let flushed = 0;
+    let emptyCount = 0;
+
+    // Keep popping until we get 3 consecutive empty responses
+    while (emptyCount < 3) {
+      try {
+        const body: PopJobRequest = {
+          workerId: `flush-${this.workerId}`,
+          blockedCrawlIds: [],
+        };
+
+        const response = await fetch(
+          `${this.baseUrl}/queue/pop/${encodeURIComponent(teamId)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.job) {
+            flushed++;
+            emptyCount = 0;
+          } else {
+            emptyCount++;
+          }
+        } else {
+          emptyCount++;
+        }
+      } catch {
+        emptyCount++;
+      }
+    }
+
+    return flushed;
+  }
+
+  /**
+   * Flush all active jobs for a team.
+   * Returns the number of jobs flushed.
+   */
+  async flushTeamActiveJobs(teamId: string): Promise<number> {
+    let flushed = 0;
+
+    try {
+      // Get all active job IDs
+      const response = await fetch(
+        `${this.baseUrl}/active/jobs/${encodeURIComponent(teamId)}`,
+        {
+          method: 'GET',
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+
+      if (response.ok) {
+        const jobIds: string[] = await response.json();
+
+        // Remove each active job
+        for (const jobId of jobIds) {
+          try {
+            const body: RemoveActiveJobRequest = { teamId, jobId };
+            await fetch(`${this.baseUrl}/active/remove`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(5000),
+            });
+            flushed++;
+          } catch {
+            // Ignore errors during flush
+          }
+        }
+      }
+    } catch {
+      // Ignore errors during flush
+    }
+
+    return flushed;
+  }
 }

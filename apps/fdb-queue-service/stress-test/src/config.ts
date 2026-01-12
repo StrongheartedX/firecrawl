@@ -15,7 +15,7 @@ export const DEFAULT_CONFIG: StressTestConfig = {
   durationSeconds: 300,
   teamTiers: DEFAULT_TIERS,
   workerConcurrency: 500,
-  jobProcessingDelayMs: 100,
+  jobProcessingDelayMs: 3500, // Realistic p50 job processing time
   metricsBufferSize: 100_000, // Reduced from 1M to save memory
   reportIntervalSeconds: 10,
   verbose: false,

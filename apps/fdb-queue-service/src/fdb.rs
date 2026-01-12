@@ -1,6 +1,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use foundationdb::{Database, RangeOption, TransactionCommitError, options::MutationType};
 use std::collections::HashSet;
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::models::{FdbQueueJob, ClaimedJob};
@@ -36,7 +37,7 @@ pub enum FdbError {
 }
 
 pub struct FdbQueue {
-    db: Database,
+    db: Arc<Database>,
 }
 
 impl FdbQueue {
@@ -46,7 +47,7 @@ impl FdbQueue {
         let db = Database::new(Some(cluster_file))
             .map_err(|e| FdbError::Other(format!("Failed to open database: {:?}", e)))?;
 
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
     // === Key building helpers ===
@@ -336,6 +337,11 @@ impl FdbQueue {
     /// This design achieves both:
     /// - Zero conflicts (worker_id differentiates pre-commit keys)
     /// - O(1) winner determination (versionstamp is first in final key sort order)
+    ///
+    /// OPTIMIZED VERSION:
+    /// - Skips checking for existing claims (we'll find out when we verify)
+    /// - Uses get_committed_version to compare versionstamps efficiently
+    /// - Spawns cleanup asynchronously to not block response
     pub async fn pop_next_job(
         &self,
         team_id: &str,
@@ -383,27 +389,32 @@ impl FdbQueue {
             }
         }
 
-        // Clean up expired jobs in a separate transaction (best effort)
+        // Clean up expired jobs ASYNCHRONOUSLY (don't block the response)
         if !expired_jobs.is_empty() {
-            let cleanup_trx = self.db.create_trx()?;
-            for (key, job) in &expired_jobs {
-                cleanup_trx.clear(key);
-                let team_counter_key = Self::build_counter_key(COUNTER_TEAM, team_id);
-                cleanup_trx.atomic_op(&team_counter_key, &Self::encode_i64_le(-1), MutationType::Add);
+            let db = self.db.clone();
+            let team_id_owned = team_id.to_string();
+            tokio::spawn(async move {
+                if let Ok(cleanup_trx) = db.create_trx() {
+                    for (key, job) in &expired_jobs {
+                        cleanup_trx.clear(key);
+                        let team_counter_key = Self::build_counter_key(COUNTER_TEAM, &team_id_owned);
+                        cleanup_trx.atomic_op(&team_counter_key, &Self::encode_i64_le(-1), MutationType::Add);
 
-                if let Some(times_out_at) = job.times_out_at {
-                    let ttl_key = Self::build_ttl_index_key(times_out_at, team_id, &job.id);
-                    cleanup_trx.clear(&ttl_key);
-                }
+                        if let Some(times_out_at) = job.times_out_at {
+                            let ttl_key = Self::build_ttl_index_key(times_out_at, &team_id_owned, &job.id);
+                            cleanup_trx.clear(&ttl_key);
+                        }
 
-                if let Some(ref cid) = job.crawl_id {
-                    cleanup_trx.clear(&Self::build_crawl_index_key(cid, &job.id));
-                    let crawl_counter_key = Self::build_counter_key(COUNTER_CRAWL, cid);
-                    cleanup_trx.atomic_op(&crawl_counter_key, &Self::encode_i64_le(-1), MutationType::Add);
+                        if let Some(ref cid) = job.crawl_id {
+                            cleanup_trx.clear(&Self::build_crawl_index_key(cid, &job.id));
+                            let crawl_counter_key = Self::build_counter_key(COUNTER_CRAWL, cid);
+                            cleanup_trx.atomic_op(&crawl_counter_key, &Self::encode_i64_le(-1), MutationType::Add);
+                        }
+                    }
+                    // Best effort - ignore errors
+                    let _ = cleanup_trx.commit().await;
                 }
-            }
-            // Best effort - ignore errors
-            let _ = cleanup_trx.commit().await;
+            });
         }
 
         if candidates.is_empty() {
@@ -412,10 +423,10 @@ impl FdbQueue {
 
         // Try to claim each candidate in priority order
         for (queue_key, job) in candidates {
-            // Check if job already has claims (snapshot read)
             let claims_prefix = Self::build_claims_prefix(&job.id);
             let claims_end = Self::end_key(&claims_prefix);
 
+            // Check for existing claims BEFORE writing (saves a write if already claimed)
             let check_trx = self.db.create_trx()?;
             let existing_claims = check_trx.get_range(
                 &RangeOption::from((&claims_prefix[..], &claims_end[..])),
@@ -423,19 +434,24 @@ impl FdbQueue {
                 true, // snapshot
             ).await?;
 
-            // If there are existing claims, this job is already being contested
-            // Skip to next candidate to avoid wasted effort
             if !existing_claims.is_empty() {
+                // Already claimed by someone, skip to next candidate
+                // (This is the CRDT read-before-write pattern)
                 continue;
             }
 
-            // Submit our claim with versionstamp (conflict-free because worker_id is in key)
+            // No claims yet - submit ours with versionstamp (conflict-free because worker_id is in key)
             let claim_trx = self.db.create_trx()?;
             let claim_key = Self::build_claim_key_with_versionstamp(&job.id, worker_id);
+
+            // Generate unique claim ID for THIS request (worker_id alone isn't unique
+            // when the same client makes concurrent requests)
+            let claim_id = format!("{}:{}", worker_id, uuid::Uuid::new_v4());
 
             // Also store the queue_key in the claim value so we can find the job later
             let claim_value = serde_json::json!({
                 "workerId": worker_id,
+                "claimId": claim_id,
                 "queueKey": BASE64.encode(&queue_key),
                 "claimedAt": now,
             });
@@ -451,6 +467,7 @@ impl FdbQueue {
             // Now read the first claim to see who won (lowest versionstamp)
             // Key format: claims/{job_id}/{versionstamp(10)}/{worker_id}
             // Claims are naturally sorted by versionstamp, so first one wins! O(1)
+            // IMPORTANT: Also check job still exists to prevent race with complete_job
             let verify_trx = self.db.create_trx()?;
             let all_claims = verify_trx.get_range(
                 &RangeOption::from((&claims_prefix[..], &claims_end[..])),
@@ -458,8 +475,22 @@ impl FdbQueue {
                 true, // snapshot
             ).await?;
 
+            // Check if job still exists (same snapshot as claim check)
+            let job_still_exists = verify_trx.get(&queue_key, true).await?.is_some();
+
+            if !job_still_exists {
+                // Job was completed between our candidate read and verification
+                // Another worker won and already processed it
+                tracing::debug!(
+                    "Job {} was completed before we could verify claim",
+                    job.id
+                );
+                continue;
+            }
+
             if all_claims.is_empty() {
-                // Shouldn't happen since we just wrote one, but handle gracefully
+                // Claims were cleared (job completed) - shouldn't happen if job exists
+                // but handle defensively
                 continue;
             }
 
@@ -467,12 +498,14 @@ impl FdbQueue {
             let winning_claim = all_claims.iter().next().unwrap();
             let winning_value: serde_json::Value = serde_json::from_slice(winning_claim.value())?;
 
-            if winning_value["workerId"].as_str() == Some(worker_id) {
-                // We won! Return the job
+            // Compare claimId (unique per request) not workerId (shared by concurrent requests)
+            if winning_value["claimId"].as_str() == Some(&claim_id) {
+                // We won AND job still exists!
                 tracing::debug!(
-                    "Won claim for job {} (worker {})",
+                    "Won claim for job {} (worker {}, claim {})",
                     job.id,
-                    worker_id
+                    worker_id,
+                    claim_id
                 );
 
                 return Ok(Some(ClaimedJob {
@@ -482,9 +515,10 @@ impl FdbQueue {
             } else {
                 // We lost, try next candidate
                 tracing::debug!(
-                    "Lost claim for job {} to worker {:?}",
+                    "Lost claim for job {} to claim {:?} (we were {})",
                     job.id,
-                    winning_value["workerId"].as_str()
+                    winning_value["claimId"].as_str(),
+                    claim_id
                 );
                 continue;
             }

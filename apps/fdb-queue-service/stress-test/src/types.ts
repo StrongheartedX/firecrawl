@@ -22,6 +22,7 @@ export interface ActiveJob {
   jobId: string;
   queueKey: string;
   startTime: number;
+  fromFDB?: boolean; // True if job came from FDB concurrency queue (promotion)
 }
 
 // Team simulation state
