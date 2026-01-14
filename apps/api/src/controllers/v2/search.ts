@@ -11,7 +11,6 @@ import {
 } from "./types";
 import { billTeam } from "../../services/billing/credit_billing";
 import { v7 as uuidv7 } from "uuid";
-import { addScrapeJob, waitForJob } from "../../services/queue-jobs";
 import { logSearch, logRequest } from "../../services/logging/log_job";
 import { search } from "../../search/v2";
 import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
@@ -19,10 +18,8 @@ import { logger as _logger } from "../../lib/logger";
 import type { Logger } from "winston";
 import { getJobPriority } from "../../lib/job-priority";
 import { CostTracking } from "../../lib/cost-tracking";
-import { supabase_service } from "../../services/supabase";
 import { SearchV2Response } from "../../lib/entities";
 import { ScrapeJobTimeoutError } from "../../lib/error";
-import { scrapeQueue } from "../../services/worker/nuq";
 import { z } from "zod";
 import {
   buildSearchQuery,
@@ -33,6 +30,9 @@ import {
   applyZdrScope,
   captureExceptionWithZdrCheck,
 } from "../../services/sentry";
+import { NuQJob } from "../../services/worker/nuq";
+import { processJobInternal } from "../../services/worker/scrape-worker";
+import { ScrapeJobData } from "../../types";
 
 interface DocumentWithCostTracking {
   document: Document;
@@ -45,7 +45,12 @@ interface ScrapeJobInput {
   description: string;
 }
 
-async function startScrapeJob(
+/**
+ * Directly scrape a search result without going through NuQ queue.
+ * This bypasses concurrency limits and calls processJobInternal directly.
+ * All search scrapes run concurrently via Promise.all().
+ */
+async function scrapeSearchResultDirect(
   searchResult: { url: string; title: string; description: string },
   options: {
     teamId: string;
@@ -59,15 +64,14 @@ async function startScrapeJob(
   },
   logger: Logger,
   flags: TeamFlags,
-  directToBullMQ: boolean = false,
-  isSearchPreview: boolean = false,
-): Promise<string> {
+  jobPriority: number,
+): Promise<DocumentWithCostTracking> {
   const jobId = uuidv7();
 
   const zeroDataRetention =
     flags?.forceZDR || (options.zeroDataRetention ?? false);
 
-  logger.info("Adding scrape job", {
+  logger.debug("Starting direct scrape for search result", {
     scrapeId: jobId,
     url: searchResult.url,
     teamId: options.teamId,
@@ -75,122 +79,69 @@ async function startScrapeJob(
     zeroDataRetention,
   });
 
-  const jobPriority = await getJobPriority({
-    team_id: options.teamId,
-    basePriority: 10,
-  });
-
-  await addScrapeJob(
-    {
-      url: searchResult.url,
-      mode: "single_urls",
-      team_id: options.teamId,
-      scrapeOptions: {
-        ...options.scrapeOptions,
-        // TODO: fix this
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
-      },
-      internalOptions: {
-        teamId: options.teamId,
-        bypassBilling: options.bypassBilling ?? true,
-        zeroDataRetention,
-      },
-      origin: options.origin,
-      // Do not touch this flag
-      is_scrape: options.bypassBilling ?? false,
-      startTime: Date.now(),
-      zeroDataRetention,
-      apiKeyId: options.apiKeyId,
-      requestId: options.requestId,
-    },
-    jobId,
-    jobPriority,
-    directToBullMQ,
-    true,
-  );
-
-  return jobId;
-}
-
-async function scrapeSearchResult(
-  searchResult: { url: string; title: string; description: string },
-  options: {
-    teamId: string;
-    origin: string;
-    timeout: number;
-    scrapeOptions: ScrapeOptions;
-    bypassBilling?: boolean;
-    apiKeyId: number | null;
-    zeroDataRetention?: boolean;
-    requestId?: string;
-  },
-  logger: Logger,
-  flags: TeamFlags,
-  directToBullMQ: boolean = false,
-  isSearchPreview: boolean = false,
-): Promise<DocumentWithCostTracking> {
   try {
-    // Start the scrape job
-    const jobId = await startScrapeJob(
-      searchResult,
-      options,
-      logger,
-      flags,
-      directToBullMQ,
-      isSearchPreview,
-    );
+    const job: NuQJob<ScrapeJobData> = {
+      id: jobId,
+      status: "active",
+      createdAt: new Date(),
+      priority: jobPriority,
+      data: {
+        url: searchResult.url,
+        mode: "single_urls",
+        team_id: options.teamId,
+        scrapeOptions: {
+          ...options.scrapeOptions,
+          maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+        },
+        internalOptions: {
+          teamId: options.teamId,
+          bypassBilling: options.bypassBilling ?? true,
+          zeroDataRetention,
+          teamFlags: flags,
+        },
+        skipNuq: true, // Skip NuQ queue
+        origin: options.origin,
+        is_scrape: false, // Search scrapes don't count as direct scrapes
+        startTime: Date.now(),
+        zeroDataRetention,
+        apiKeyId: options.apiKeyId,
+        requestId: options.requestId,
+      },
+    };
 
-    const doc: Document = await waitForJob(
-      jobId,
-      options.timeout,
-      options.zeroDataRetention ?? false,
-      logger,
-    );
+    // Directly call processJobInternal without going through queue
+    const doc = await processJobInternal(job);
 
-    logger.info("Scrape job completed", {
+    logger.info("Direct scrape completed for search result", {
       scrapeId: jobId,
       url: searchResult.url,
       teamId: options.teamId,
       origin: options.origin,
     });
 
-    await scrapeQueue.removeJob(jobId, logger);
-
-    const document = {
+    const document: Document = {
       title: searchResult.title,
       description: searchResult.description,
       url: searchResult.url,
       ...doc,
+      metadata: doc?.metadata ?? {
+        statusCode: 200,
+        proxyUsed: "basic",
+      },
     };
 
-    let costTracking: ReturnType<typeof CostTracking.prototype.toJSON>;
-    if (config.USE_DB_AUTHENTICATION) {
-      const { data: costTrackingResponse, error: costTrackingError } =
-        await supabase_service
-          .from("scrapes")
-          .select("cost_tracking")
-          .eq("id", jobId);
-
-      if (costTrackingError) {
-        logger.error("Error getting cost tracking", {
-          error: costTrackingError,
-        });
-        throw costTrackingError;
-      }
-
-      costTracking = costTrackingResponse?.[0]?.cost_tracking;
-    } else {
-      costTracking = new CostTracking().toJSON();
-    }
+    // Cost tracking is handled internally by processJobInternal
+    const costTracking = new CostTracking().toJSON();
 
     return {
       document,
       costTracking,
     };
   } catch (error) {
-    logger.error(`Error in scrapeSearchResult: ${error}`, {
+    logger.error(`Error in scrapeSearchResultDirect: ${error}`, {
       url: searchResult.url,
       teamId: options.teamId,
+      scrapeId: jobId,
     });
 
     const document: Document = {
@@ -374,16 +325,13 @@ export async function searchController(
     const shouldScrape =
       req.body.scrapeOptions?.formats &&
       req.body.scrapeOptions.formats.length > 0;
-    const isAsyncScraping = req.body.asyncScraping && shouldScrape;
 
     if (!shouldScrape) {
       const creditsPerTenResults = isZDR ? 10 : 2;
       credits_billed = Math.ceil(totalResultsCount / 10) * creditsPerTenResults;
     } else {
-      // Common setup for both async and sync scraping
-      logger.info(
-        `Starting ${isAsyncScraping ? "async" : "sync"} search scraping`,
-      );
+      // Direct scraping (calls processJobInternal directly, no NuQ, no concurrency limits)
+      logger.info("Starting direct search scraping");
 
       // Safely extract scrapeOptions with runtime check
       if (!req.body.scrapeOptions) {
@@ -409,8 +357,6 @@ export async function searchController(
         zeroDataRetention: isZDROrAnon,
         requestId: agentRequestId ?? jobId,
       };
-
-      const directToBullMQ = (req.acuc?.price_credits ?? 0) <= 3000;
 
       // Prepare all items to scrape with their original data
       const itemsToScrape: Array<{
@@ -480,200 +426,91 @@ export async function searchController(
           });
       }
 
-      // Create all promises based on mode (async vs sync)
-      const allPromises = itemsToScrape.map(({ scrapeInput }) =>
-        isAsyncScraping
-          ? startScrapeJob(
-              scrapeInput,
-              scrapeOptions,
-              logger,
-              req.acuc?.flags ?? null,
-              directToBullMQ,
-              isSearchPreview,
-            )
-          : scrapeSearchResult(
-              scrapeInput,
-              scrapeOptions,
-              logger,
-              req.acuc?.flags ?? null,
-              directToBullMQ,
-              isSearchPreview,
-            ),
+      // Get job priority once for all scrapes
+      const jobPriority = await getJobPriority({
+        team_id: req.auth.team_id,
+        basePriority: 10,
+      });
+
+      // Call processJobInternal directly for all search scrapes (no NuQ, no concurrency limits)
+      // All scrapes are started concurrently via Promise.all()
+      logger.info(
+        `Starting ${itemsToScrape.length} concurrent scrapes for search results`,
       );
 
-      // Execute all operations in parallel
-      const results = await Promise.all(allPromises);
+      const allPromises = itemsToScrape.map(({ scrapeInput }) =>
+        scrapeSearchResultDirect(
+          scrapeInput,
+          scrapeOptions,
+          logger,
+          req.acuc?.flags ?? null,
+          jobPriority,
+        ),
+      );
 
-      if (isAsyncScraping) {
-        // Async mode: organize job IDs and return immediately
-        const allJobIds = results as string[];
-        const scrapeIds: {
-          web?: string[];
-          news?: string[];
-          images?: string[];
-        } = {};
+      // Execute all scrapes concurrently
+      const allDocsWithCostTracking = await Promise.all(allPromises);
 
-        // Organize job IDs by type
-        const webItems = itemsToScrape.filter(i => i.type === "web");
-        const newsItems = itemsToScrape.filter(i => i.type === "news");
-        const imageItems = itemsToScrape.filter(i => i.type === "image");
+      logger.info(
+        `Completed ${allDocsWithCostTracking.length} concurrent scrapes for search results`,
+      );
 
-        let currentIndex = 0;
+      const scrapedResponse: SearchV2Response = {};
 
-        if (webItems.length > 0) {
-          scrapeIds.web = allJobIds.slice(
-            currentIndex,
-            currentIndex + webItems.length,
-          );
-          currentIndex += webItems.length;
-        }
-
-        if (newsItems.length > 0) {
-          scrapeIds.news = allJobIds.slice(
-            currentIndex,
-            currentIndex + newsItems.length,
-          );
-          currentIndex += newsItems.length;
-        }
-
-        if (imageItems.length > 0) {
-          scrapeIds.images = allJobIds.slice(
-            currentIndex,
-            currentIndex + imageItems.length,
-          );
-        }
-
-        const creditsPerTenResults = isZDR ? 10 : 2;
-        credits_billed =
-          Math.ceil(totalResultsCount / 10) * creditsPerTenResults;
-
-        // Bill for search results now (scrape jobs will bill themselves when they complete)
-        if (!isSearchPreview) {
-          billTeam(
-            req.auth.team_id,
-            req.acuc?.sub_id ?? undefined,
-            credits_billed,
-            req.acuc?.api_key_id ?? null,
-          ).catch(error => {
-            logger.error(
-              `Failed to bill team ${req.acuc?.sub_id} for ${credits_billed} credits: ${error}`,
-            );
-          });
-        }
-
-        const endTime = new Date().getTime();
-        const timeTakenInSeconds = (endTime - middlewareStartTime) / 1000;
-
-        logger.info("Logging job (async scraping)", {
-          num_docs: credits_billed,
-          time_taken: timeTakenInSeconds,
-          scrapeIds,
-        });
-
-        logSearch(
-          {
-            id: jobId,
-            request_id: jobId,
-            query: req.body.query,
-            is_successful: true,
-            error: undefined,
-            results: searchResponse as any,
-            num_results: totalResultsCount,
-            time_taken: timeTakenInSeconds,
-            team_id: req.auth.team_id,
-            options: req.body,
-            credits_cost: credits_billed,
-            zeroDataRetention: isZDROrAnon ?? false,
-          },
-          false,
+      // Create a map of results indexed by URL for easy lookup
+      const resultsMap = new Map<string, Document>();
+      itemsToScrape.forEach((item, index) => {
+        resultsMap.set(
+          item.scrapeInput.url,
+          allDocsWithCostTracking[index].document,
         );
+      });
 
-        // Log final timing information for async mode
-        const totalRequestTime = new Date().getTime() - middlewareStartTime;
-        const controllerTime = new Date().getTime() - controllerStartTime;
-        logger.info("Search completed successfully (async)", {
-          version: "v2",
-          jobId,
-          middlewareStartTime,
-          controllerStartTime,
-          middlewareTime,
-          controllerTime,
-          totalRequestTime,
-          creditsUsed: credits_billed,
-          scrapeful: shouldScrape,
+      // Process web results - preserve all original fields and add scraped content
+      if (searchResponse.web && searchResponse.web.length > 0) {
+        scrapedResponse.web = searchResponse.web.map(item => {
+          const doc = resultsMap.get(item.url);
+          return {
+            ...item, // Preserve ALL original fields
+            ...doc, // Override/add scraped content
+          };
         });
-
-        return res.status(200).json({
-          success: true,
-          data: searchResponse,
-          scrapeIds,
-          creditsUsed: credits_billed,
-          id: jobId,
-        });
-      } else {
-        // Sync mode: process scraped documents
-        const allDocsWithCostTracking = results as DocumentWithCostTracking[];
-        const scrapedResponse: SearchV2Response = {};
-
-        // Create a map of results indexed by URL for easy lookup
-        const resultsMap = new Map<string, Document>();
-        itemsToScrape.forEach((item, index) => {
-          resultsMap.set(
-            item.scrapeInput.url,
-            allDocsWithCostTracking[index].document,
-          );
-        });
-
-        // Process web results - preserve all original fields and add scraped content
-        if (searchResponse.web && searchResponse.web.length > 0) {
-          scrapedResponse.web = searchResponse.web.map(item => {
-            const doc = resultsMap.get(item.url);
-            return {
-              ...item, // Preserve ALL original fields
-              ...doc, // Override/add scraped content
-            };
-          });
-        }
-
-        // Process news results - preserve all original fields and add scraped content
-        if (searchResponse.news && searchResponse.news.length > 0) {
-          scrapedResponse.news = searchResponse.news.map(item => {
-            const doc = item.url ? resultsMap.get(item.url) : undefined;
-            return {
-              ...item, // Preserve ALL original fields
-              ...doc, // Override/add scraped content
-            };
-          });
-        }
-
-        // Process image results - preserve all original fields and add scraped content
-        if (searchResponse.images && searchResponse.images.length > 0) {
-          scrapedResponse.images = searchResponse.images.map(item => {
-            const doc = item.url ? resultsMap.get(item.url) : undefined;
-            return {
-              ...item, // Preserve ALL original fields
-              ...doc, // Override/add scraped content
-            };
-          });
-        }
-
-        // Calculate search credits only - scrape jobs bill themselves
-        const creditsPerTenResults = isZDR ? 10 : 2;
-        credits_billed =
-          Math.ceil(totalResultsCount / 10) * creditsPerTenResults;
-
-        // Update response with scraped data
-        Object.assign(searchResponse, scrapedResponse);
       }
+
+      // Process news results - preserve all original fields and add scraped content
+      if (searchResponse.news && searchResponse.news.length > 0) {
+        scrapedResponse.news = searchResponse.news.map(item => {
+          const doc = item.url ? resultsMap.get(item.url) : undefined;
+          return {
+            ...item, // Preserve ALL original fields
+            ...doc, // Override/add scraped content
+          };
+        });
+      }
+
+      // Process image results - preserve all original fields and add scraped content
+      if (searchResponse.images && searchResponse.images.length > 0) {
+        scrapedResponse.images = searchResponse.images.map(item => {
+          const doc = item.url ? resultsMap.get(item.url) : undefined;
+          return {
+            ...item, // Preserve ALL original fields
+            ...doc, // Override/add scraped content
+          };
+        });
+      }
+
+      // Calculate search credits only - scrape jobs bill themselves
+      const creditsPerTenResults = isZDR ? 10 : 2;
+      credits_billed = Math.ceil(totalResultsCount / 10) * creditsPerTenResults;
+
+      // Update response with scraped data
+      Object.assign(searchResponse, scrapedResponse);
     }
 
     // Bill team for search credits only
-    // - Scrape jobs always handle their own billing (both sync and async)
+    // - Scrape jobs always handle their own billing
     // - Search job only bills for search costs (credits per 10 results)
-    if (
-      !isSearchPreview &&
-      (!shouldScrape || (shouldScrape && !isAsyncScraping))
-    ) {
+    if (!isSearchPreview) {
       billTeam(
         req.auth.team_id,
         req.acuc?.sub_id ?? undefined,
