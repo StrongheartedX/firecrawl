@@ -88,6 +88,33 @@ async function supaCheckTeamCredits(
     };
   }
 
+  // If team is part of an organization, skip credit checks
+  const orgCacheKey = `team_org_${team_id}`;
+  let isPartOfOrganization = false;
+  const cachedOrgData = await getValue(orgCacheKey);
+  if (cachedOrgData !== null) {
+    isPartOfOrganization = cachedOrgData === "true";
+  } else {
+    const { data: orgData } = await supabase_rr_service
+      .from("organizations")
+      .select("id")
+      .eq("team_id", team_id)
+      .limit(1)
+      .single();
+
+    isPartOfOrganization = !!orgData;
+    await setValue(orgCacheKey, isPartOfOrganization ? "true" : "false", 300); // Cache for 5 minutes
+  }
+
+  if (isPartOfOrganization) {
+    return {
+      success: true,
+      message: "Credit checks skipped for organization team",
+      remainingCredits: Infinity,
+      chunk,
+    };
+  }
+
   const remainingCredits = chunk.price_should_be_graceful
     ? chunk.remaining_credits + chunk.price_credits
     : chunk.remaining_credits;
