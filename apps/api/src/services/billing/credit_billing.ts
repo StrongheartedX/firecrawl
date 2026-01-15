@@ -78,16 +78,6 @@ async function supaCheckTeamCredits(
     throw new Error("NULL ACUC passed to supaCheckTeamCredits");
   }
 
-  // If bypassCreditChecks flag is set, return success with infinite credits (infinitely graceful)
-  if (chunk.flags?.bypassCreditChecks) {
-    return {
-      success: true,
-      message: "Credit checks bypassed",
-      remainingCredits: Infinity,
-      chunk,
-    };
-  }
-
   // If team is part of an organization, skip credit checks
   try {
     const orgCacheKey = `team_org_${team_id}`;
@@ -118,6 +108,16 @@ async function supaCheckTeamCredits(
   } catch (error) {
     // If organization check fails, continue with normal credit checks
     logger.warn("Organization check failed, continuing with normal credit checks", { team_id, error });
+  }
+
+  // If bypassCreditChecks flag is set, return success with infinite credits (infinitely graceful)
+  if (chunk.flags?.bypassCreditChecks) {
+    return {
+      success: true,
+      message: "Credit checks bypassed",
+      remainingCredits: Infinity,
+      chunk,
+    };
   }
 
   const remainingCredits = chunk.price_should_be_graceful
