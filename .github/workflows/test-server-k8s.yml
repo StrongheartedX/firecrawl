@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: ["playwright", "fetch"]
-        proxy: ["no-proxy"]  # Proxy tests disabled - external proxy can't reach internal k8s services
+        proxy: ["proxy", "no-proxy"]
         search: ["searxng"]
         ai: ["openai"]
     runs-on: blacksmith-32vcpu-ubuntu-2404
