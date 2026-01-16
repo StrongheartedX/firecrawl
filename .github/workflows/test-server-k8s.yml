@@ -223,7 +223,8 @@ jobs:
             -f ./infra/helm-charts/firecrawl/values-ci-test.yaml \
             --set image.repository=ghcr.io/${{ github.repository_owner }}/firecrawl-ci \
             --set image.tag=${{ github.sha }} \
-            --set image.pullSecrets[0].name=ghcr-cred \
+            --set image.dockerSecretEnabled=true \
+            --set imagePullSecrets[0].name=ghcr-cred \
             --wait \
             --timeout 10m \
             --debug
