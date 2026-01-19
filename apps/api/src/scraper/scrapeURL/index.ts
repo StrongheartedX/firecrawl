@@ -252,7 +252,7 @@ async function buildMetaObject(
       ? setTimeout(
           () =>
             abortController.abort(
-              new ScrapeJobTimeoutError("Scrape timed out"),
+              new ScrapeJobTimeoutError(),
             ),
           options.timeout,
         )
@@ -282,7 +282,7 @@ async function buildMetaObject(
             tier: "scrape",
             timesOutAt: new Date(Date.now() + options.timeout),
             throwable() {
-              return new ScrapeJobTimeoutError("Scrape timed out");
+              return new ScrapeJobTimeoutError();
             },
           }
         : undefined,
