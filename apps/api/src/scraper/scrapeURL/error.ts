@@ -167,23 +167,9 @@ export class ProxySelectionError extends TransportableError {
 
 export class ActionError extends TransportableError {
   constructor(public errorCode: string) {
-    const actionErrorExplanations: Record<string, string> = {
-      timeout:
-        "The action timed out before completing. The page may be slow or the selector may not exist.",
-      "element-not-found":
-        "The element specified by the selector could not be found on the page. Verify the selector is correct and the element exists.",
-      "navigation-failed": "Navigation triggered by the action failed to complete.",
-      "click-intercepted":
-        "The click was intercepted by another element (e.g., a popup or overlay). Try adding a wait action first or closing any popups.",
-    };
-
-    const explanation =
-      actionErrorExplanations[errorCode] ||
-      "The action could not be completed on the page.";
-
     super(
       "SCRAPE_ACTION_ERROR",
-      `One or more actions in your scrape request failed to complete. Error code: "${errorCode}". ${explanation} Check that your selectors are correct and the page has fully loaded before the action is attempted. You may need to add a 'wait' action before other actions.`,
+      "Action(s) failed to complete. Error code: " + errorCode,
     );
   }
 
@@ -231,10 +217,7 @@ export class UnsupportedFileError extends TransportableError {
 
 export class PDFAntibotError extends TransportableError {
   constructor() {
-    super(
-      "SCRAPE_PDF_ANTIBOT_ERROR",
-      "The PDF could not be scraped because the website's anti-bot protection prevented access. This happens when a website uses CAPTCHAs, bot detection, or other security measures to protect PDF downloads. Possible solutions: (1) Try using the 'stealth' proxy option, (2) Add a wait time before accessing the PDF, (3) If the PDF is behind authentication, you may need to provide session cookies, or (4) Contact Firecrawl support if this is a critical URL.",
-    );
+    super("SCRAPE_PDF_ANTIBOT_ERROR", "PDF scrape was prevented by anti-bot");
   }
 
   serialize() {
@@ -315,7 +298,7 @@ export class NoCachedDataError extends TransportableError {
   constructor() {
     super(
       "SCRAPE_NO_CACHED_DATA",
-      "No cached data is available for this URL that meets your specified maxAge requirement. This means Firecrawl has not scraped this URL within the time window you requested, or the URL has never been scraped before. To get fresh data, remove or increase the maxAge parameter to allow a new scrape, or omit it entirely to always get fresh content.",
+      "No cached data is available for this URL that meets your specified age requirements. This error occurs when you use the minAge parameter to request only cached data, but Firecrawl has no cached version of this URL (or no version within the specified age range). To resolve this, either remove the minAge parameter to allow a fresh scrape, or try again later after the URL has been scraped and cached.",
     );
   }
 
@@ -337,7 +320,7 @@ export class ZDRViolationError extends TransportableError {
   constructor(public feature: string) {
     super(
       "SCRAPE_ZDR_VIOLATION_ERROR",
-      `The feature "${feature}" is not available when using Zero Data Retention (ZDR) mode. ZDR mode ensures that no scraped content is stored on Firecrawl servers, but this limits certain features that require data storage or caching (such as caching, certain proxy modes, or advanced processing). To use this feature, you need to disable ZDR mode, or contact support@firecrawl.com to discuss enterprise options that may support both ZDR and this feature.`,
+      `The feature "${feature}" is not available when using Zero Data Retention (ZDR) mode. ZDR mode ensures that no scraped content is stored on Firecrawl servers, but this limits certain features that require data storage (such as the index engine, certain proxy modes, or advanced processing). To use this feature, you need to disable ZDR mode. Contact support@firecrawl.com if you need help.`,
     );
   }
 
@@ -385,7 +368,7 @@ export class DocumentAntibotError extends TransportableError {
   constructor() {
     super(
       "SCRAPE_DOCUMENT_ANTIBOT_ERROR",
-      "The document could not be scraped because the website's anti-bot protection prevented access. This happens when a website uses CAPTCHAs, bot detection, or other security measures to protect document downloads (like DOCX, XLSX, etc.). Possible solutions: (1) Try using the 'stealth' proxy option, (2) Add a wait time before accessing the document, (3) If the document is behind authentication, you may need to provide session cookies, or (4) Contact Firecrawl support if this is a critical URL.",
+      "Document scrape was prevented by anti-bot",
     );
   }
 
