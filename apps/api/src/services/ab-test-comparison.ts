@@ -76,6 +76,73 @@ function computeContentDiff(
   };
 }
 
+async function runComparison(
+  url: string,
+  productionResponse: FireEngineResponse,
+  productionTimeTaken: number,
+  mirrorPromise: Promise<MirrorResult>,
+  abLogger: Logger,
+): Promise<void> {
+  const mirrorResult = await mirrorPromise;
+
+  if (mirrorResult.error || !mirrorResult.response) {
+    abLogger.warn(
+      `${AB_LOG_PREFIX} Mirror request failed - unable to compare`,
+      {
+        url,
+        error: mirrorResult.error?.message ?? "unknown",
+        prod_ms: productionTimeTaken,
+      },
+    );
+    return;
+  }
+
+  const contentDiff = computeContentDiff(
+    productionResponse.content,
+    mirrorResult.response.content,
+  );
+
+  const baseLogData = {
+    url,
+    prod_ms: productionTimeTaken,
+    mirror_ms: mirrorResult.timeTaken,
+    diff_ms: mirrorResult.timeTaken - productionTimeTaken,
+  };
+
+  if (contentDiff.skipped) {
+    abLogger.info(`${AB_LOG_PREFIX} Comparison skipped - content too large`, {
+      ...baseLogData,
+      skip_reason: contentDiff.skipReason,
+    });
+    return;
+  }
+
+  if (contentDiff.identical) {
+    abLogger.info(`${AB_LOG_PREFIX} Content identical`, baseLogData);
+    return;
+  }
+
+  const diffLogData = {
+    ...baseLogData,
+    diff_pct: contentDiff.diffPercentage,
+    added: contentDiff.addedLines,
+    removed: contentDiff.removedLines,
+  };
+  const diffMessage = `+${contentDiff.addedLines}/-${contentDiff.removedLines} lines, ${contentDiff.diffPercentage}%`;
+
+  if (contentDiff.diffPercentage! > DIFF_THRESHOLD_PERCENT) {
+    abLogger.warn(
+      `${AB_LOG_PREFIX} Content mismatch detected (${diffMessage})`,
+      diffLogData,
+    );
+  } else {
+    abLogger.info(
+      `${AB_LOG_PREFIX} Minor content differences (${diffMessage})`,
+      diffLogData,
+    );
+  }
+}
+
 export function scheduleABComparison(
   url: string,
   productionResponse: FireEngineResponse,
@@ -85,71 +152,16 @@ export function scheduleABComparison(
 ): void {
   const abLogger = logger.child({ method: "ABTestComparison" });
 
-  // Fire-and-forget - don't await, don't block
-  (async () => {
-    try {
-      const mirrorResult = await mirrorPromise;
-
-      if (mirrorResult.error || !mirrorResult.response) {
-        // Mirror failed
-        abLogger.warn(
-          `${AB_LOG_PREFIX} Mirror request failed - unable to compare`,
-          {
-            url,
-            error: mirrorResult.error?.message ?? "unknown",
-            prod_ms: productionTimeTaken,
-          },
-        );
-        return;
-      }
-
-      const latencyDiff = mirrorResult.timeTaken - productionTimeTaken;
-
-      // Check for content diff
-      const contentDiff = computeContentDiff(
-        productionResponse.content,
-        mirrorResult.response.content,
-      );
-
-      const baseLogData = {
-        url,
-        prod_ms: productionTimeTaken,
-        mirror_ms: mirrorResult.timeTaken,
-        diff_ms: latencyDiff,
-      };
-
-      if (contentDiff.skipped) {
-        abLogger.info(
-          `${AB_LOG_PREFIX} Comparison skipped - content too large`,
-          {
-            ...baseLogData,
-            skip_reason: contentDiff.skipReason,
-          },
-        );
-      } else if (
-        !contentDiff.identical &&
-        contentDiff.diffPercentage !== undefined &&
-        contentDiff.diffPercentage > DIFF_THRESHOLD_PERCENT
-      ) {
-        // Log significant content mismatch as warning
-        abLogger.warn(
-          `${AB_LOG_PREFIX} Content mismatch detected (+${contentDiff.addedLines}/-${contentDiff.removedLines} lines, ${contentDiff.diffPercentage}%)`,
-          {
-            ...baseLogData,
-            diff_pct: contentDiff.diffPercentage,
-            added: contentDiff.addedLines,
-            removed: contentDiff.removedLines,
-          },
-        );
-      } else {
-        // Content identical
-        abLogger.info(`${AB_LOG_PREFIX} Content identical`, baseLogData);
-      }
-    } catch (error) {
-      abLogger.error(AB_LOG_PREFIX + " comparison failed unexpectedly", {
-        error,
-        url,
-      });
-    }
-  })();
+  runComparison(
+    url,
+    productionResponse,
+    productionTimeTaken,
+    mirrorPromise,
+    abLogger,
+  ).catch(error => {
+    abLogger.error(`${AB_LOG_PREFIX} comparison failed unexpectedly`, {
+      error,
+      url,
+    });
+  });
 }
